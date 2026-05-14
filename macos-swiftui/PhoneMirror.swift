@@ -1,5 +1,34 @@
 import SwiftUI
 
+// --- Single-instance guard using file lock ---
+
+class SingleInstanceLock {
+    private var lockFile: FileHandle?
+    
+    func acquire() -> Bool {
+        let lockPath = NSTemporaryDirectory() + "phonemirror.lock"
+        // Create file if needed
+        if !FileManager.default.fileExists(atPath: lockPath) {
+            FileManager.default.createFile(atPath: lockPath, contents: nil)
+        }
+        guard let file = FileHandle(forUpdatingAtPath: lockPath) else { return true }
+        lockFile = file
+        // Try non-blocking lock — returns false if another instance holds it
+        let result = flock(file.fileDescriptor, LOCK_EX | LOCK_NB)
+        if result != 0 {
+            // Lock failed — another instance is running
+            print("PhoneMirror already running. Exiting.")
+            return false
+        }
+        // Write our PID so we can identify it
+        if let pidData = "\(ProcessInfo.processInfo.processIdentifier)".data(using: .utf8) {
+            file.truncateFile(atOffset: 0)
+            file.write(pidData)
+        }
+        return true
+    }
+}
+
 struct Config {
     static let adb = ProcessInfo.processInfo.environment["HOME"]! + "/Library/Android/sdk/platform-tools/adb"
     static let scrcpy = "/opt/homebrew/bin/scrcpy"
@@ -197,6 +226,12 @@ class AppState: ObservableObject {
 
 @main
 struct PhoneMirrorApp: App {
+    private let lock = SingleInstanceLock()
+    init() {
+        if !lock.acquire() {
+            NSApplication.shared.terminate(nil)
+        }
+    }
     @StateObject private var app = AppState()
     
     var body: some Scene {
