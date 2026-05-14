@@ -91,8 +91,7 @@ func startMirror() {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: Config.scrcpy)
     task.arguments = ["--shortcut-mod=lctrl"]
-    task.standardOutput = FileHandle.nullDevice
-    task.standardError = FileHandle.nullDevice
+    // Don't suppress stdout/stderr — scrcpy needs them for its SDL window
     try? task.run()
     notify("📱 Mirror Started", "scrcpy window opened")
 }
