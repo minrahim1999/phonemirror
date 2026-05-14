@@ -84,31 +84,29 @@ fn recordings_dir() -> String {
     }
 }
 
-// ─── Shell helpers ─────────────────────────────────────────
+// ─── Safe command execution ────────────────────────────────
+// All commands use Command::new() with .args() to avoid shell injection.
 
-fn shell(cmd: &str) -> String {
-    if cfg!(target_os = "windows") {
-        Command::new("cmd").args(["/C", cmd]).output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default()
-    } else {
-        Command::new("sh").args(["-c", cmd]).output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default()
-    }
+fn adb_output(args: &[&str]) -> String {
+    let adb = adb_path();
+    Command::new(&adb)
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
 }
 
-fn run_bg(cmd: &str) {
-    if cfg!(target_os = "windows") {
-        let _ = Command::new("cmd").args(["/C", &format!("start /B {}", cmd)]).spawn();
-    } else {
-        let _ = Command::new("sh").args(["-c", &format!("{} &", cmd)]).spawn();
-    }
+fn adb_run(args: &[&str]) -> bool {
+    let adb = adb_path();
+    Command::new(&adb).args(args).spawn().is_ok()
 }
 
 fn notify(title: &str, body: &str) {
     if cfg!(target_os = "macos") {
-        let script = format!("display notification \"{}\" with title \"{}\"", body, title);
+        // Escape double-quotes in body for AppleScript safety
+        let safe_body = body.replace('"', "\\\"");
+        let safe_title = title.replace('"', "\\\"");
+        let script = format!("display notification \"{}\" with title \"{}\"", safe_body, safe_title);
         let _ = Command::new("osascript").args(["-e", &script]).spawn();
     } else if cfg!(target_os = "linux") {
         let _ = Command::new("notify-send").args([title, body]).spawn();
@@ -120,8 +118,7 @@ fn notify(title: &str, body: &str) {
 // ─── Core actions ──────────────────────────────────────────
 
 fn check_device() -> (bool, String) {
-    let adb = adb_path();
-    let output = shell(&format!("\"{}\" devices", adb));
+    let output = adb_output(&["devices"]);
     for line in output.lines().skip(1) {
         let trimmed = line.trim();
         if trimmed.contains("device") && !trimmed.contains("daemon") && !trimmed.is_empty() {
@@ -133,24 +130,26 @@ fn check_device() -> (bool, String) {
 }
 
 fn take_screenshot() {
-    let adb = adb_path();
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let dir = screenshots_dir();
     let sep = if cfg!(target_os = "windows") { "\\" } else { "/" };
     let filename = format!("{}{}phone_screenshot_{}.png", dir, sep, timestamp);
+    let remote_path = "/sdcard/phone_screenshot.png";
 
-    shell(&format!("\"{}\" shell screencap -p /sdcard/phone_screenshot.png", adb));
-    shell(&format!("\"{}\" pull /sdcard/phone_screenshot.png \"{}\"", adb, filename));
-    shell(&format!("\"{}\" shell rm /sdcard/phone_screenshot.png", adb));
+    adb_run(&["shell", "screencap", "-p", remote_path]);
+    adb_run(&["pull", remote_path, &filename]);
+    adb_run(&["shell", "rm", remote_path]);
     notify("📸 Screenshot Saved", &filename);
 }
 
 fn start_mirror() {
     let scrcpy = scrcpy_path();
     if cfg!(target_os = "macos") {
-        run_bg(&format!("\"{}\" --shortcut-mod=lctrl", scrcpy));
+        let _ = Command::new(&scrcpy)
+            .arg("--shortcut-mod=lctrl")
+            .spawn();
     } else {
-        run_bg(&format!("\"{}\"", scrcpy));
+        let _ = Command::new(&scrcpy).spawn();
     }
     notify("📱 Mirror Started", "scrcpy window opened");
 }
@@ -162,7 +161,9 @@ fn start_recording() {
     let sep = if cfg!(target_os = "windows") { "\\" } else { "/" };
     let filename = format!("{}{}phone_recording_{}.mp4", dir, sep, timestamp);
 
-    run_bg(&format!("\"{}\" --record=\"{}\" --no-playback --no-audio --no-window", scrcpy, filename));
+    let _ = Command::new(&scrcpy)
+        .args(["--record", &filename, "--no-playback", "--no-audio", "--no-window"])
+        .spawn();
     notify("🎬 Recording Started", &format!("Saving to: {}", filename));
 }
 
@@ -182,7 +183,6 @@ fn main() {
     {
         use tray_item::{TrayItem, IconSource};
 
-        // Create a minimal 16x16 RGBA phone icon
         let icon_data: Vec<u8> = create_phone_icon();
         let icon = IconSource::Data { height: 16, width: 16, data: icon_data };
 
@@ -193,7 +193,7 @@ fn main() {
         tray.add_menu_item("📸 Screenshot", || { take_screenshot(); }).unwrap();
         tray.add_menu_item("🎬 Record Video", || { start_recording(); }).unwrap();
         tray.add_menu_item("📵 Close Mirror", || { close_mirror(); }).unwrap();
-        tray.add_label("").unwrap(); // separator-like
+        tray.add_label("").unwrap();
         tray.add_menu_item("🔄 Refresh", || {
             let (connected, id) = check_device();
             println!("Device: {} ({})", id, if connected { "connected" } else { "disconnected" });
@@ -203,7 +203,6 @@ fn main() {
             std::process::exit(0);
         }).unwrap();
 
-        // Background polling thread
         std::thread::spawn(|| {
             let mut was_connected = false;
             loop {
@@ -218,7 +217,6 @@ fn main() {
             }
         });
 
-        // macOS: Need to call display() on the inner impl to start NSApplication.run()
         tray.inner_mut().display();
     }
 
@@ -226,7 +224,6 @@ fn main() {
     {
         use tray_item::{TrayItem, IconSource};
 
-        // On Windows, create icon from resource or use RawIcon(0) for default
         let icon = IconSource::Resource("");
         let mut tray = TrayItem::new("PhoneMirror", icon)
             .expect("Failed to create tray item");
@@ -245,7 +242,6 @@ fn main() {
             std::process::exit(0);
         }).unwrap();
 
-        // Background polling thread
         std::thread::spawn(|| {
             let mut was_connected = false;
             loop {
@@ -260,9 +256,6 @@ fn main() {
             }
         });
 
-        // Windows tray doesn't have .display() - it runs via Windows message loop
-        // The TrayItem::new() already starts the message loop thread
-        // Keep main thread alive
         loop {
             std::thread::sleep(std::time::Duration::from_secs(60));
         }
@@ -317,24 +310,17 @@ fn create_phone_icon() -> Vec<u8> {
     let mut data = Vec::with_capacity(16 * 16 * 4);
     for y in 0..16u8 {
         for x in 0..16u8 {
-            // Phone body: blue border (x 3-12, y 1-14)
-            // Screen: lighter blue (x 4-11, y 3-12)
-            // Home button: (x 6-9, y 13)
-            let on_border = (x >= 3 && x <= 12 && y >= 1 && y <= 14);
-            let on_screen = (x >= 4 && x <= 11 && y >= 3 && y <= 12);
-            let on_home = (x >= 6 && x <= 9 && y == 13);
+            let on_border = (3..=12).contains(&x) && (1..=14).contains(&y);
+            let on_screen = (4..=11).contains(&x) && (3..=12).contains(&y);
+            let on_home = (6..=9).contains(&x) && y == 13;
 
             if on_screen {
-                // Screen - light blue
                 data.extend_from_slice(&[200, 230, 255, 255]);
             } else if on_home {
-                // Home button
                 data.extend_from_slice(&[180, 200, 220, 255]);
             } else if on_border {
-                // Phone body - blue
                 data.extend_from_slice(&[30, 120, 220, 255]);
             } else {
-                // Transparent
                 data.extend_from_slice(&[0, 0, 0, 0]);
             }
         }
