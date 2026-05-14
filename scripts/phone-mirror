@@ -1,0 +1,6 @@
+#!/bin/bash
+# Mirror Android phone screen with scrcpy
+# Quit: Ctrl+Q, Back: Ctrl+B, Home: Ctrl+H, Screen off: Ctrl+O
+# Screenshot: use phone-screenshot command in another terminal
+# Record: use phone-record command in another terminal
+scrcpy --shortcut-mod=lctrl

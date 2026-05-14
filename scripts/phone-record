@@ -1,0 +1,8 @@
+#!/bin/bash
+# Record Android phone screen, save to Mac Movies
+# Press Ctrl+C to stop recording
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+FILENAME=~/Movies/phone_recording_${TIMESTAMP}.mp4
+echo "🎬 Recording... Press Ctrl+C to stop"
+scrcpy --record="$FILENAME" --no-playback --no-audio
+echo "✅ Recording saved: $FILENAME"
