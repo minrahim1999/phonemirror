@@ -108,6 +108,7 @@ class AppState: ObservableObject {
     @Published var mirrorRunning: Bool = false
     private var timer: Timer?
     private var wasConnected: Bool = false
+    private var scrcpyProcess: Process?
     
     init() {
         refresh()
@@ -154,9 +155,18 @@ class AppState: ObservableObject {
     
     func mirror() {
         DispatchQueue.global(qos: .userInitiated).async {
-            startMirror()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                self.mirrorRunning = true
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: Config.scrcpy)
+            task.arguments = ["--shortcut-mod=lctrl"]
+            do {
+                try task.run()
+                DispatchQueue.main.async {
+                    self.scrcpyProcess = task
+                    self.mirrorRunning = true
+                }
+                notify("📱 Mirror Started", "scrcpy window opened")
+            } catch {
+                notify("❌ Mirror Failed", error.localizedDescription)
             }
         }
     }
@@ -164,7 +174,8 @@ class AppState: ObservableObject {
     func closeMirrorAction() {
         DispatchQueue.global(qos: .userInitiated).async {
             closeMirror()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            DispatchQueue.main.async {
+                self.scrcpyProcess = nil
                 self.mirrorRunning = false
             }
         }
