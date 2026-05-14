@@ -35,6 +35,8 @@ struct Config {
     static let home = ProcessInfo.processInfo.environment["HOME"]!
 }
 
+
+
 func runSilent(_ cmd: String) {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/bin/bash")
