@@ -33,9 +33,26 @@ struct Config {
     static let adb = ProcessInfo.processInfo.environment["HOME"]! + "/Library/Android/sdk/platform-tools/adb"
     static let scrcpy = "/opt/homebrew/bin/scrcpy"
     static let home = ProcessInfo.processInfo.environment["HOME"]!
+    static let logFile = ProcessInfo.processInfo.environment["HOME"]! + "/phonemirror_debug.log"
 }
 
-
+func log(_ msg: String) {
+    let df = DateFormatter()
+    df.dateFormat = "HH:mm:ss"
+    let timestamp = df.string(from: Date())
+    let line = "[\(timestamp)] \(msg)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: Config.logFile) {
+            if let handle = FileHandle(forWritingAtPath: Config.logFile) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: URL(fileURLWithPath: Config.logFile), options: .atomic)
+        }
+    }
+}
 
 func runSilent(_ cmd: String) {
     let task = Process()
@@ -122,9 +139,14 @@ func startMirror() {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: Config.scrcpy)
     task.arguments = ["--shortcut-mod=lctrl"]
-    // Don't suppress stdout/stderr — scrcpy needs them for its SDL window
-    try? task.run()
-    notify("📱 Mirror Started", "scrcpy window opened")
+    // Do NOT redirect stdout/stderr — scrcpy needs them for its SDL window.
+    // If you pipe them, scrcpy's video renderer can't open a display.
+    do {
+        try task.run()
+        notify("📱 Mirror Started", "scrcpy window opened")
+    } catch {
+        notify("❌ Mirror Failed", error.localizedDescription)
+    }
 }
 
 func closeMirror() {
@@ -140,14 +162,48 @@ class AppState: ObservableObject {
     private var timer: Timer?
     private var wasConnected: Bool = false
     private var scrcpyProcess: Process?
+    private var isShuttingDown: Bool = false
     
     init() {
+        log("PhoneMirror starting")
         refresh()
         startPolling()
     }
     
     deinit {
         timer?.invalidate()
+    }
+    
+    /// Cleanly shut down all processes: kill scrcpy, stop recording, stop adb server, stop polling
+    func shutdown() {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+        log("Shutdown: starting cleanup...")
+        
+        // Stop polling timer first so refresh() doesn't fire during shutdown
+        timer?.invalidate()
+        timer = nil
+        
+        // Kill all scrcpy processes (mirror + recording)
+        runSilent("pkill -x scrcpy 2>/dev/null")
+        runSilent("pkill -f 'scrcpy.*--record' 2>/dev/null")
+        scrcpyProcess = nil
+        mirrorRunning = false
+        isRecording = false
+        
+        // Kill adb server — stops the daemon and frees the USB connection
+        runSilent("\(Config.adb) kill-server 2>/dev/null")
+        
+        // Remove single-instance lock so a fresh launch can start
+        let lockPath = NSTemporaryDirectory() + "phonemirror.lock"
+        // flock is released automatically when the file handle closes on process exit
+        // but explicitly clean up the file too
+        try? FileManager.default.removeItem(atPath: lockPath)
+        
+        log("Shutdown: cleanup complete, terminating app")
+        
+        // Terminate the app
+        NSApplication.shared.terminate(nil)
     }
     
     func startPolling() {
@@ -165,10 +221,12 @@ class AppState: ObservableObject {
                 // Notify when phone connects
                 if connected && !self.wasConnected {
                     notify("PhoneMirror", "📱 Phone connected!")
+                    log("Phone connected")
                 }
                 // Notify when phone disconnects
                 if !connected && self.wasConnected {
                     notify("PhoneMirror", "📵 Phone disconnected")
+                    log("Phone disconnected")
                 }
                 self.wasConnected = connected
                 self.deviceConnected = connected
@@ -186,17 +244,54 @@ class AppState: ObservableObject {
     
     func mirror() {
         DispatchQueue.global(qos: .userInitiated).async {
+            log("Mirror: starting...")
+            // Kill any leftover scrcpy first
+            runSilent("pkill -x scrcpy 2>/dev/null")
+            Thread.sleep(forTimeInterval: 0.5)
+            log("Mirror: killed old scrcpy, launching new one")
+            
             let task = Process()
             task.executableURL = URL(fileURLWithPath: Config.scrcpy)
             task.arguments = ["--shortcut-mod=lctrl"]
+            // Capture stderr for debug logging, but let stdout through for SDL
+            let errPipe = Pipe()
+            task.standardError = errPipe
+            
             do {
                 try task.run()
+                log("Mirror: scrcpy launched, PID=\(task.processIdentifier)")
                 DispatchQueue.main.async {
                     self.scrcpyProcess = task
                     self.mirrorRunning = true
                 }
                 notify("📱 Mirror Started", "scrcpy window opened")
+                
+                // Read stderr in background for debugging
+                let errHandle = errPipe.fileHandleForReading
+                DispatchQueue.global(qos: .utility).async {
+                    let errData = errHandle.readDataToEndOfFile()
+                    if let errStr = String(data: errData, encoding: .utf8), !errStr.isEmpty {
+                        log("Mirror stderr: \(errStr)")
+                    }
+                }
+                
+                // Monitor scrcpy exit
+                DispatchQueue.global(qos: .utility).async {
+                    task.waitUntilExit()
+                    let exitCode = task.terminationStatus
+                    log("Mirror: scrcpy exited with code \(exitCode)")
+                    DispatchQueue.main.async {
+                        self.scrcpyProcess = nil
+                        if !isScrcpyRunning() {
+                            self.mirrorRunning = false
+                            if exitCode != 0 {
+                                notify("❌ Mirror Exited", "scrcpy exited with code \(exitCode). Try again.")
+                            }
+                        }
+                    }
+                }
             } catch {
+                log("Mirror: FAILED to launch - \(error.localizedDescription)")
                 notify("❌ Mirror Failed", error.localizedDescription)
             }
         }
@@ -286,8 +381,7 @@ struct PhoneMirrorApp: App {
                 Divider()
                 
                 Button("Quit PhoneMirror") {
-                    runSilent("pkill -x scrcpy 2>/dev/null")
-                    NSApplication.shared.terminate(nil)
+                    app.shutdown()
                 }
             }
             .padding(8)
