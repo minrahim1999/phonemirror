@@ -8,8 +8,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("PhoneMirror")
-            .with_inner_size([420.0, 620.0])
-            .with_min_inner_size([360.0, 500.0])
+            .with_inner_size([420.0, 640.0])
+            .with_min_inner_size([320.0, 480.0])
             .with_icon(icon),
         ..Default::default()
     };
@@ -85,7 +85,25 @@ fn card_frame() -> egui::Frame {
         .fill(CARD_BG)
         .stroke(egui::Stroke::new(1.0, BORDER))
         .corner_radius(8)
-        .inner_margin(egui::Margin::same(14))
+        .inner_margin(egui::Margin::same(12))
+}
+
+// ─── Truncate long paths for display ─────────────────────
+
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len {
+        path.to_string()
+    } else if let Some(slash_pos) = path.rfind('/') {
+        let filename = &path[slash_pos + 1..];
+        if filename.len() >= max_len {
+            format!("…{}", &filename[..max_len - 1])
+        } else {
+            // Show "…/filename" pattern
+            format!("…/{}", filename)
+        }
+    } else {
+        format!("…{}", &path[path.len() - max_len + 1..])
+    }
 }
 
 // ─── App ──────────────────────────────────────────────────
@@ -160,7 +178,6 @@ impl eframe::App for PhoneMirrorApp {
                 self.show_close_warning = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            // If not running, just let it close normally
         }
 
         // Close warning popup
@@ -169,15 +186,15 @@ impl eframe::App for PhoneMirrorApp {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .fixed_size([320.0, 160.0])
                 .show(ctx, |ui| {
+                    ui.set_width(300.0);
                     ui.vertical_centered(|ui| {
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new("⚠️ Mirror is still running!").size(16.0).color(YELLOW));
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                         ui.label(egui::RichText::new("The phone mirror is still active.\nWhat would you like to do?").size(13.0).color(TEXT));
-                        ui.add_space(12.0);
-                        ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        ui.vertical(|ui| {
                             if ui.button(egui::RichText::new("❌ Close Mirror & Quit").size(13.0).color(RED)).clicked() {
                                 self.close_mirror();
                                 self.show_close_warning = false;
@@ -196,171 +213,179 @@ impl eframe::App for PhoneMirrorApp {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(16)))
+            .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(12)))
             .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("📱 PhoneMirror").size(22.0).strong().color(ACCENT));
-                    ui.label(egui::RichText::new("v2.0.0 — Cross-platform").size(11.0).color(TEXT_DIM));
-                    ui.add_space(12.0);
-                });
-
-                ui.set_max_width(ui.available_width());
-
-                // Device Status
-                card_frame().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("🔌").size(16.0));
-                        ui.label(egui::RichText::new("Device Status").size(15.0).strong().color(TEXT));
+                // Scrollable area so content never clips off-screen
+                egui::ScrollArea::vertical()
+                    .max_width(f32::INFINITY)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                    // Header
+                    ui.vertical_centered(|ui| {
+                        ui.label(egui::RichText::new("📱 PhoneMirror").size(20.0).strong().color(ACCENT));
+                        ui.label(egui::RichText::new("v2.0.0 · Cross-platform").size(10.0).color(TEXT_DIM));
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(10.0);
 
-                    if !self.device_status.checked {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(4.0);
-                            ui.label(egui::RichText::new("⏳ Checking...").size(14.0).color(YELLOW));
+                    // ── Device Status Card ──
+                    card_frame().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("🔌").size(15.0));
+                            ui.label(egui::RichText::new("Device Status").size(14.0).strong().color(TEXT));
                         });
-                    } else if self.device_status.connected {
-                        ui.colored_label(GREEN, egui::RichText::new("● Connected").size(14.0).strong());
                         ui.add_space(4.0);
-                        info_row(ui, "Device", &self.device_status.device_id);
-                    } else {
-                        ui.colored_label(RED, egui::RichText::new("● Disconnected").size(14.0).strong());
-                    }
 
-                    if self.device_status.checked {
-                        ui.add_space(2.0);
-                        info_row(ui, "ADB", &self.device_status.adb_path);
-                        info_row(ui, "scrcpy", &self.device_status.scrcpy_path);
-                    }
-                });
+                        if !self.device_status.checked {
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new("⏳ Checking...").size(13.0).color(YELLOW));
+                            });
+                        } else if self.device_status.connected {
+                            ui.colored_label(GREEN, egui::RichText::new("● Connected").size(13.0).strong());
+                            ui.add_space(2.0);
+                            info_row(ui, "Device", &self.device_status.device_id);
+                        } else {
+                            ui.colored_label(RED, egui::RichText::new("● Disconnected").size(13.0).strong());
+                        }
 
-                ui.add_space(8.0);
-
-                // Screen Mirror
-                card_frame().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("🖥️").size(16.0));
-                        ui.label(egui::RichText::new("Screen Mirror").size(15.0).strong().color(TEXT));
+                        if self.device_status.checked {
+                            ui.add_space(2.0);
+                            // Wrap long paths using available width
+                            let available = ui.available_width();
+                            info_row_wrapped(ui, "ADB", truncate_path(&self.device_status.adb_path, 40).as_str(), available);
+                            info_row_wrapped(ui, "scrcpy", truncate_path(&self.device_status.scrcpy_path, 40).as_str(), available);
+                        }
                     });
+
                     ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
+                    // ── Screen Mirror Card ──
+                    card_frame().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("🖥️").size(15.0));
+                            ui.label(egui::RichText::new("Screen Mirror").size(14.0).strong().color(TEXT));
+                        });
+                        ui.add_space(4.0);
+
+                        // Use wrapped layout for buttons
+                        ui.horizontal_wrapped(|ui| {
+                            if self.mirror_running {
+                                if action_button(ui, "📵 Close", RED) {
+                                    self.close_mirror();
+                                }
+                            } else {
+                                if action_button(ui, "📱 Start Mirror", ACCENT) {
+                                    self.start_mirror();
+                                }
+                            }
+                            if action_button(ui, "📸 Screenshot", GREEN) {
+                                self.take_screenshot();
+                            }
+                        });
+
                         if self.mirror_running {
-                            if action_button(ui, "📵 Close", RED) {
+                            ui.add_space(2.0);
+                            ui.colored_label(GREEN, egui::RichText::new("● Mirror active — close window to minimize").size(11.0));
+                        }
+                    });
+
+                    ui.add_space(6.0);
+
+                    // ── Recording Card ──
+                    card_frame().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("🎬").size(15.0));
+                            ui.label(egui::RichText::new("Recording").size(14.0).strong().color(TEXT));
+                        });
+                        ui.add_space(4.0);
+
+                        if self.is_recording {
+                            ui.horizontal_wrapped(|ui| {
+                                let alpha = 0.5 + 0.5 * (self.pulse_time * std::f32::consts::PI).sin();
+                                ui.colored_label(
+                                    egui::Color32::from_rgba_premultiplied(220, 50, 50, (alpha * 255.0) as u8),
+                                    egui::RichText::new("⏺").size(15.0),
+                                );
+                                ui.label(egui::RichText::new("Recording...").size(12.0).color(YELLOW));
+                                if action_button(ui, "⏹ Stop", RED) {
+                                    self.stop_recording();
+                                }
+                            });
+                        } else {
+                            if action_button(ui, "⏺ Start Recording", RECORD_RED) {
+                                self.start_recording();
+                            }
+                        }
+                    });
+
+                    ui.add_space(6.0);
+
+                    // ── Actions Card ──
+                    card_frame().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("⚡").size(15.0));
+                            ui.label(egui::RichText::new("Actions").size(14.0).strong().color(TEXT));
+                        });
+                        ui.add_space(4.0);
+
+                        ui.horizontal_wrapped(|ui| {
+                            if action_button(ui, "🔄 Refresh", TEXT_DIM) {
+                                self.refresh_device();
+                            }
+                            if action_button(ui, "📵 Force Close", RED) {
                                 self.close_mirror();
                             }
-                        } else {
-                            if action_button(ui, "📱 Start Mirror", ACCENT) {
-                                self.start_mirror();
-                            }
-                        }
-                        if action_button(ui, "📸 Screenshot", GREEN) {
-                            self.take_screenshot();
-                        }
-                    });
-
-                    if self.mirror_running {
-                        ui.add_space(4.0);
-                        ui.colored_label(GREEN, egui::RichText::new("● Mirror active — close window to minimize").size(12.0));
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                // Recording
-                card_frame().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("🎬").size(16.0));
-                        ui.label(egui::RichText::new("Recording").size(15.0).strong().color(TEXT));
-                    });
-                    ui.add_space(6.0);
-
-                    if self.is_recording {
-                        ui.horizontal(|ui| {
-                            let alpha = 0.5 + 0.5 * (self.pulse_time * std::f32::consts::PI).sin();
-                            ui.colored_label(
-                                egui::Color32::from_rgba_premultiplied(220, 50, 50, (alpha * 255.0) as u8),
-                                egui::RichText::new("⏺").size(16.0),
-                            );
-                            ui.label(egui::RichText::new("Recording...").size(13.0).color(YELLOW));
-                            if action_button(ui, "⏹ Stop", RED) {
-                                self.stop_recording();
-                            }
                         });
-                    } else {
-                        if action_button(ui, "⏺ Start Recording", RECORD_RED) {
-                            self.start_recording();
-                        }
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                // Actions
-                card_frame().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("⚡").size(16.0));
-                        ui.label(egui::RichText::new("Actions").size(15.0).strong().color(TEXT));
                     });
-                    ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
-                        if action_button(ui, "🔄 Refresh", TEXT_DIM) {
-                            self.refresh_device();
-                        }
-                        if action_button(ui, "📵 Force Close", RED) {
-                            self.close_mirror();
-                        }
-                    });
-                });
-
-                // Status message
-                if !self.status_message.is_empty() {
-                    ui.add_space(8.0);
-                    let fill = if self.status_is_error {
-                        egui::Color32::from_rgba_premultiplied(80, 20, 20, 180)
-                    } else {
-                        egui::Color32::from_rgba_premultiplied(20, 60, 40, 180)
-                    };
-                    egui::Frame::new()
-                        .fill(fill)
-                        .corner_radius(6)
-                        .inner_margin(egui::Margin::symmetric(12, 8))
-                        .show(ui, |ui| {
-                            ui.vertical_centered(|ui| {
+                    // Status message
+                    if !self.status_message.is_empty() {
+                        ui.add_space(6.0);
+                        let fill = if self.status_is_error {
+                            egui::Color32::from_rgba_premultiplied(80, 20, 20, 180)
+                        } else {
+                            egui::Color32::from_rgba_premultiplied(20, 60, 40, 180)
+                        };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .corner_radius(6)
+                            .inner_margin(egui::Margin::symmetric(10, 6))
+                            .show(ui, |ui| {
                                 let icon = if self.status_is_error { "✗" } else { "✓" };
                                 let color = if self.status_is_error { RED } else { GREEN };
-                                ui.colored_label(color, egui::RichText::new(format!("{} {}", icon, self.status_message)).size(13.0));
+                                // Truncate status if too long
+                                let msg = if self.status_message.len() > 60 {
+                                    format!("{}…", &self.status_message[..57])
+                                } else {
+                                    self.status_message.clone()
+                                };
+                                ui.colored_label(color, egui::RichText::new(format!("{} {}", icon, msg)).size(12.0));
                             });
-                        });
-                }
-
-                // Footer
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    if self.mirror_running {
-                        ui.colored_label(GREEN, egui::RichText::new("📡 Mirror active — closing window minimizes app").size(10.0));
                     }
-                    ui.hyperlink_to(
-                        egui::RichText::new("github.com/minrahim1999/phonemirror").size(10.0).color(ACCENT),
-                        "https://github.com/minrahim1999/phonemirror",
-                    );
-                    ui.label(egui::RichText::new("PhoneMirror v2.0.0 · Open Source · MIT License").size(10.0).color(TEXT_DIM));
+
+                    // Footer
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        if self.mirror_running {
+                            ui.colored_label(GREEN, egui::RichText::new("📡 Mirror active — closing window minimizes app").size(9.0));
+                        }
+                        ui.hyperlink_to(
+                            egui::RichText::new("github.com/minrahim1999/phonemirror").size(9.0).color(ACCENT),
+                            "https://github.com/minrahim1999/phonemirror",
+                        );
+                        ui.label(egui::RichText::new("PhoneMirror v2.0.0 · Open Source · MIT License").size(9.0).color(TEXT_DIM));
+                    });
                 });
             });
 
         ctx.request_repaint_after(Duration::from_secs(1));
     }
-
-
 }
 
 // ─── UI Helpers ───────────────────────────────────────────
 
 fn action_button(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> bool {
     let fill = egui::Color32::from_rgb(color.r() / 3, color.g() / 3, color.b() / 3);
-    ui.add(egui::Button::new(egui::RichText::new(text).size(13.0).color(egui::Color32::WHITE))
+    ui.add(egui::Button::new(egui::RichText::new(text).size(12.0).color(egui::Color32::WHITE))
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, color))
         .corner_radius(6))
@@ -369,8 +394,16 @@ fn action_button(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> bool {
 
 fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{}:", label)).size(12.0).color(TEXT_DIM));
+        ui.label(egui::RichText::new(format!("{}:", label)).size(11.0).color(TEXT_DIM));
         ui.label(egui::RichText::new(value).size(11.0).color(TEXT).monospace());
+    });
+}
+
+fn info_row_wrapped(ui: &mut egui::Ui, label: &str, value: &str, _available_width: f32) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("{}:", label)).size(11.0).color(TEXT_DIM));
+        // Use wrapping label for long paths
+        ui.add(egui::Label::new(egui::RichText::new(value).size(11.0).color(TEXT).monospace()).wrap());
     });
 }
 
@@ -482,7 +515,7 @@ impl PhoneMirrorApp {
 
         match pull_result {
             Ok(s) if s.success() => {
-                self.status_message = format!("Screenshot saved: {}", filename);
+                self.status_message = "Screenshot saved!".to_string();
                 self.status_is_error = false;
             }
             _ => {
@@ -506,7 +539,7 @@ impl PhoneMirrorApp {
         {
             Ok(_) => {
                 self.is_recording = true;
-                self.status_message = format!("Recording to: {}", filename);
+                self.status_message = "Recording started".to_string();
                 self.status_is_error = false;
             }
             Err(e) => {
