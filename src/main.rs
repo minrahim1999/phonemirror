@@ -95,9 +95,10 @@ fn card_frame() -> egui::Frame {
 
 /// Show a card at full available width
 fn show_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    let width = ui.available_width();
     card_frame().show(ui, |ui| {
-        ui.set_width(width);
+        // Inside the card, available_width is already reduced by inner_margin
+        // Just let content fill the available card width
+        ui.set_width(ui.available_width());
         add_contents(ui);
     });
 }
