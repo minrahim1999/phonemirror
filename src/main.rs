@@ -28,31 +28,24 @@ fn load_icon() -> egui::IconData {
         for x in 0..size {
             let fx = x as f32;
             let fy = y as f32;
-            let center = size as f32 / 2.0;
 
-            // Phone outline
             let phone_left = 18.0;
             let phone_right = 46.0;
             let phone_top = 6.0;
             let phone_bottom = 56.0;
-
             let in_phone = fx >= phone_left && fx <= phone_right && fy >= phone_top && fy <= phone_bottom;
 
-            // Screen
             let screen_left = 21.0;
             let screen_right = 43.0;
             let screen_top = 12.0;
             let screen_bottom = 50.0;
-
             let in_screen = fx >= screen_left && fx <= screen_right && fy >= screen_top && fy <= screen_bottom;
 
-            // Mirror reflection (diagonal line)
             let in_reflection = in_screen
                 && fy > 22.0 && fy < 40.0
                 && fx > 26.0 && fx < 40.0
                 && ((fy - fx + 10.0).abs() < 2.5 || (fy + fx - 72.0).abs() < 2.5);
 
-            // Home button
             let in_home = (fx - 32.0).powi(2) + (fy - 53.0).powi(2) < 6.0;
 
             let (r, g, b, a) = if in_reflection {
@@ -95,18 +88,6 @@ fn card_frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(14))
 }
 
-fn status_frame(is_error: bool) -> egui::Frame {
-    let fill = if is_error {
-        egui::Color32::from_rgba_premultiplied(80, 20, 20, 180)
-    } else {
-        egui::Color32::from_rgba_premultiplied(20, 60, 40, 180)
-    };
-    egui::Frame::new()
-        .fill(fill)
-        .corner_radius(6)
-        .inner_margin(egui::Margin::symmetric(12, 8))
-}
-
 // ─── App ──────────────────────────────────────────────────
 
 struct PhoneMirrorApp {
@@ -117,6 +98,7 @@ struct PhoneMirrorApp {
     status_is_error: bool,
     last_refresh: Instant,
     pulse_time: f32,
+    show_close_warning: bool,
 }
 
 #[derive(Clone)]
@@ -144,6 +126,7 @@ impl Default for PhoneMirrorApp {
             status_is_error: false,
             last_refresh: Instant::now(),
             pulse_time: 0.0,
+            show_close_warning: false,
         }
     }
 }
@@ -170,11 +153,52 @@ impl eframe::App for PhoneMirrorApp {
         style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
         ctx.set_style(style);
 
+        // Intercept close request — if mirror is running, show dialog instead of quitting
+        let close_requested = ctx.input(|i| i.viewport().close_requested());
+        if close_requested {
+            if self.mirror_running || self.is_recording {
+                self.show_close_warning = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+            // If not running, just let it close normally
+        }
+
+        // Close warning popup
+        if self.show_close_warning {
+            egui::Window::new("Mirror Still Running")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .fixed_size([320.0, 160.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("⚠️ Mirror is still running!").size(16.0).color(YELLOW));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("The phone mirror is still active.\nWhat would you like to do?").size(13.0).color(TEXT));
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button(egui::RichText::new("❌ Close Mirror & Quit").size(13.0).color(RED)).clicked() {
+                                self.close_mirror();
+                                self.show_close_warning = false;
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            if ui.button(egui::RichText::new("▶️ Keep Running (Minimize)").size(13.0).color(GREEN)).clicked() {
+                                self.show_close_warning = false;
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                            }
+                            if ui.button(egui::RichText::new("Cancel").size(13.0)).clicked() {
+                                self.show_close_warning = false;
+                            }
+                        });
+                    });
+                });
+        }
+
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(16)))
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    // Header
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("📱 PhoneMirror").size(22.0).strong().color(ACCENT));
                     ui.label(egui::RichText::new("v2.0.0 — Cross-platform").size(11.0).color(TEXT_DIM));
@@ -238,7 +262,7 @@ impl eframe::App for PhoneMirrorApp {
 
                     if self.mirror_running {
                         ui.add_space(4.0);
-                        ui.colored_label(GREEN, egui::RichText::new("● Mirror active").size(12.0));
+                        ui.colored_label(GREEN, egui::RichText::new("● Mirror active — close window to minimize").size(12.0));
                     }
                 });
 
@@ -294,18 +318,30 @@ impl eframe::App for PhoneMirrorApp {
                 // Status message
                 if !self.status_message.is_empty() {
                     ui.add_space(8.0);
-                    status_frame(self.status_is_error).show(ui, |ui| {
-                        ui.vertical_centered(|ui| {
-                            let icon = if self.status_is_error { "✗" } else { "✓" };
-                            let color = if self.status_is_error { RED } else { GREEN };
-                            ui.colored_label(color, egui::RichText::new(format!("{} {}", icon, self.status_message)).size(13.0));
+                    let fill = if self.status_is_error {
+                        egui::Color32::from_rgba_premultiplied(80, 20, 20, 180)
+                    } else {
+                        egui::Color32::from_rgba_premultiplied(20, 60, 40, 180)
+                    };
+                    egui::Frame::new()
+                        .fill(fill)
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                let icon = if self.status_is_error { "✗" } else { "✓" };
+                                let color = if self.status_is_error { RED } else { GREEN };
+                                ui.colored_label(color, egui::RichText::new(format!("{} {}", icon, self.status_message)).size(13.0));
+                            });
                         });
-                    });
                 }
 
                 // Footer
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
+                    if self.mirror_running {
+                        ui.colored_label(GREEN, egui::RichText::new("📡 Mirror active — closing window minimizes app").size(10.0));
+                    }
                     ui.hyperlink_to(
                         egui::RichText::new("github.com/minrahim1999/phonemirror").size(10.0).color(ACCENT),
                         "https://github.com/minrahim1999/phonemirror",
@@ -316,6 +352,8 @@ impl eframe::App for PhoneMirrorApp {
 
         ctx.request_repaint_after(Duration::from_secs(1));
     }
+
+
 }
 
 // ─── UI Helpers ───────────────────────────────────────────
