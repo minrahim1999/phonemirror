@@ -210,7 +210,7 @@ impl eframe::App for PhoneMirrorApp {
                 .show(ctx, |ui| {
                     ui.set_width(dialog_width);
 
-                    // ── Icon circle ──
+                    // ── Icon + Title + Description ──
                     ui.vertical_centered(|ui| {
                         let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(44.0, 44.0), egui::Sense::hover());
                         let center = rect.center();
@@ -218,41 +218,32 @@ impl eframe::App for PhoneMirrorApp {
                         ui.painter().circle_stroke(center, 20.0, egui::Stroke::new(2.0, YELLOW));
                         ui.painter().text(center, egui::Align2::CENTER_CENTER, "⚠", egui::FontId::proportional(22.0), YELLOW);
                         ui.add_space(8.0);
-
-                        // ── Title ──
                         ui.label(egui::RichText::new("Mirror Still Running").size(16.0).strong().color(egui::Color32::WHITE));
                         ui.add_space(4.0);
-
-                        // ── Description ──
-                        ui.label(egui::RichText::new("The phone mirror is still active.\nChoose what you'd like to do.").size(12.0).color(egui::Color32::from_rgb(170, 174, 190)));
+                        ui.label(egui::RichText::new("The phone mirror is still active.\nChoose what you'd like to do.").size(13.0).color(egui::Color32::from_rgb(210, 212, 220)));
                     });
 
-                    // ── Separator ──
-                    ui.add_space(10.0);
-                    let line_rect = ui.available_rect_before_wrap();
-                    ui.painter().line_segment(
-                        [egui::Pos2::new(line_rect.left(), line_rect.top()), egui::Pos2::new(line_rect.right(), line_rect.top())],
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 64, 80)),
-                    );
-                    ui.add_space(10.0);
+                    // ── Buttons (centered, no separator) ──
+                    ui.add_space(12.0);
+                    let btn_width = dialog_width - 40.0;
 
-                    // ── Buttons ──
-                    let btn_width = dialog_width - 40.0; // dialog - horizontal margins
-
-                    if colored_button_full(ui, "❌  Close Mirror & Quit", RED, RED_DIM, btn_width) {
-                        self.close_mirror();
-                        self.show_close_warning = false;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                    ui.add_space(4.0);
-                    if colored_button_full(ui, "▶  Keep Running", GREEN, GREEN_DIM, btn_width) {
-                        self.show_close_warning = false;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                    }
-                    ui.add_space(4.0);
-                    if colored_button_full(ui, "✕  Cancel", TEXT_DIM, egui::Color32::from_rgb(38, 40, 54), btn_width) {
-                        self.show_close_warning = false;
-                    }
+                    ui.vertical_centered(|ui| {
+                        ui.set_width(btn_width);
+                        if colored_button_full(ui, "❌  Close Mirror & Quit", RED, RED_DIM, btn_width) {
+                            self.close_mirror();
+                            self.show_close_warning = false;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        ui.add_space(4.0);
+                        if colored_button_full(ui, "▶  Keep Running", GREEN, GREEN_DIM, btn_width) {
+                            self.show_close_warning = false;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                        ui.add_space(4.0);
+                        if colored_button_full(ui, "✕  Cancel", egui::Color32::from_rgb(180, 184, 200), egui::Color32::from_rgb(48, 50, 66), btn_width) {
+                            self.show_close_warning = false;
+                        }
+                    });
                 });
         }
 
