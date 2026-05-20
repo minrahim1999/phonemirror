@@ -220,7 +220,7 @@ impl eframe::App for PhoneMirrorApp {
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new("Mirror Still Running").size(16.0).strong().color(egui::Color32::WHITE));
                         ui.add_space(4.0);
-                        ui.label(egui::RichText::new("The phone mirror is still active.\nChoose what you'd like to do.").size(13.0).color(egui::Color32::from_rgb(210, 212, 220)));
+                        ui.label(egui::RichText::new("The phone mirror is still active.\nChoose what you'd like to do.").size(13.0).color(egui::Color32::WHITE));
                     });
 
                     // ── Buttons (centered, no separator) ──
