@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          brew install create-dmg
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Create .app bundle
+        run: LOCAL_BUILD=1 bash scripts/bundle-macos.sh
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "PhoneMirror" -srcfolder PhoneMirror.app -ov -format UDZO PhoneMirror_macOS_aarch64.dmg
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            PhoneMirror_macOS_aarch64.dmg
+            target/release/phonemirror
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl-dev libegl-dev libwayland-dev libxrandr-dev
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Create .deb package
+        run: |
+          mkdir -p debian/DEBIAN
+          mkdir -p debian/usr/bin
+          mkdir -p debian/usr/share/applications
+          mkdir -p debian/usr/share/icons/hicolor/256x256/apps
+          cp target/release/phonemirror debian/usr/bin/phonemirror
+          chmod +x debian/usr/bin/phonemirror
+
+          cat > debian/DEBIAN/control << 'EOF'
+          Package: phonemirror
+          Version: 2.0.0
+          Architecture: amd64
+          Maintainer: Muhaimin Rahim <minrahim1999@users.noreply.github.com>
+          Description: Phone Mirror - Mirror your Android phone screen to your desktop
+          Depends: libgtk-3-0, libxcb1, libxkbcommon0, libgl1, libegl1, libwayland-client0
+          Section: utils
+          Priority: optional
+          EOF
+
+          cat > debian/usr/share/applications/phonemirror.desktop << 'EOF'
+          [Desktop Entry]
+          Name=PhoneMirror
+          Comment=Mirror your Android phone screen
+          Exec=phonemirror
+          Icon=phonemirror
+          Terminal=false
+          Type=Application
+          Categories=Utility;
+          EOF
+
+          dpkg-deb --build debian PhoneMirror_linux_amd64.deb
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            PhoneMirror_linux_amd64.deb
+            target/release/phonemirror
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          # egui needs these on Windows
+          # They should come with the build tools, but let's make sure
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Prepare release binary
+        shell: bash
+        run: |
+          cp target/release/phonemirror.exe PhoneMirror_Windows_x86_64.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            PhoneMirror_Windows_x86_64.exe
+
+  release:
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            macos-artifacts/PhoneMirror_macOS_aarch64.dmg
+            linux-artifacts/PhoneMirror_linux_amd64.deb
+            windows-artifacts/PhoneMirror_Windows_x86_64.exe
+          body: |
+            ## PhoneMirror v${{ github.ref_name }}
+
+            Cross-platform phone mirroring app built with Rust + egui.
+
+            ### Downloads
+            - **macOS**: `PhoneMirror_macOS_aarch64.dmg` — Open, drag to Applications
+            - **Linux**: `PhoneMirror_linux_amd64.deb` — `sudo dpkg -i PhoneMirror_linux_amd64.deb`
+            - **Windows**: `PhoneMirror_Windows_x86_64.exe` — Run directly
+
+            ### Requirements
+            - [adb](https://developer.android.com/tools/releases/platform-tools) (Android Debug Bridge)
+            - [scrcpy](https://github.com/Genymobile/scrcpy) (Screen Copy)
+
+            Install both via:
+            - **macOS**: `brew install android-platform-tools scrcpy`
+            - **Linux**: `sudo apt install adb scrcpy`
+            - **Windows**: Download from their respective GitHub releases

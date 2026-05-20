@@ -6,10 +6,16 @@ cargo build --release
 
 APP_NAME="PhoneMirror"
 BINARY="phonemirror"
-BUNDLE="/Applications/${APP_NAME}.app"
 VERSION="2.0.0"
 
-echo "📦 Creating .app bundle..."
+# Support LOCAL_BUILD=1 to build .app in project dir instead of /Applications
+if [ "${LOCAL_BUILD:-0}" = "1" ]; then
+    BUNDLE="$(pwd)/${APP_NAME}.app"
+else
+    BUNDLE="/Applications/${APP_NAME}.app"
+fi
+
+echo "📦 Creating .app bundle at $BUNDLE..."
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS"
 mkdir -p "$BUNDLE/Contents/Resources"
@@ -56,7 +62,10 @@ else
     codesign --force --deep --sign - "$BUNDLE"
 fi
 
-echo "✅ Installed to $BUNDLE"
+echo "✅ Bundle created at $BUNDLE"
 echo "   Binary: $(du -h "$BUNDLE/Contents/MacOS/$BINARY" | cut -f1)"
-echo ""
-echo "Run: open $BUNDLE"
+
+if [ "${LOCAL_BUILD:-0}" != "1" ]; then
+    echo ""
+    echo "Run: open $BUNDLE"
+fi
