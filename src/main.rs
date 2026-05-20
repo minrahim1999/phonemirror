@@ -192,10 +192,10 @@ impl eframe::App for PhoneMirrorApp {
 
         // ── Close warning dialog ──
         if self.show_close_warning {
-            let dialog_width = 300.0;
+            let dialog_width = 320.0;
             // Dim overlay behind dialog
             ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("close_overlay")))
-                .rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_rgba_premultiplied(0, 0, 0, 140));
+                .rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_rgba_premultiplied(0, 0, 0, 160));
 
             egui::Window::new("")
                 .collapsible(false)
@@ -203,35 +203,60 @@ impl eframe::App for PhoneMirrorApp {
                 .title_bar(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .frame(egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(28, 30, 42))
-                    .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(70, 74, 90)))
-                    .corner_radius(12)
-                    .inner_margin(egui::Margin::same(20)))
+                    .fill(egui::Color32::from_rgb(26, 28, 40))
+                    .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 84, 100)))
+                    .corner_radius(14)
+                    .inner_margin(egui::Margin::symmetric(24, 20)))
                 .show(ctx, |ui| {
                     ui.set_width(dialog_width);
+
+                    // ── Icon circle ──
                     ui.vertical_centered(|ui| {
-                        ui.label(egui::RichText::new("⚠️").size(28.0));
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new("Mirror is still running").size(17.0).strong().color(TEXT));
                         ui.add_space(4.0);
-                        ui.label(egui::RichText::new("The phone mirror is still active.\nChoose what to do before closing.").size(12.0).color(TEXT_DIM));
-                        ui.add_space(16.0);
+                        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(48.0, 48.0), egui::Sense::hover());
+                        let center = rect.center();
+                        ui.painter().circle_filled(center, 22.0, egui::Color32::from_rgba_premultiplied(255, 193, 7, 40));
+                        ui.painter().circle_stroke(center, 22.0, egui::Stroke::new(2.0, YELLOW));
+                        ui.painter().text(center, egui::Align2::CENTER_CENTER, "⚠", egui::FontId::proportional(24.0), YELLOW);
+                        ui.add_space(10.0);
+
+                        // ── Title ──
+                        ui.label(egui::RichText::new("Mirror Still Running").size(18.0).strong().color(TEXT));
+                        ui.add_space(6.0);
+
+                        // ── Description ──
+                        ui.label(egui::RichText::new("The phone mirror is still active.\nChoose what you'd like to do.").size(13.0).color(TEXT_DIM));
                     });
 
-                    // Full-width buttons stacked vertically
-                    let btn_width = dialog_width - 40.0; // minus inner margins
+                    // ── Separator ──
+                    ui.add_space(12.0);
+                    let line_rect = ui.available_rect_before_wrap();
+                    ui.painter().line_segment(
+                        [egui::Pos2::new(line_rect.left(), line_rect.top()), egui::Pos2::new(line_rect.right(), line_rect.top())],
+                        egui::Stroke::new(1.0, BORDER),
+                    );
+                    ui.add_space(12.0);
+
+                    // ── Buttons ──
+                    let btn_width = dialog_width - 48.0; // dialog - horizontal margins
+
+                    // Red button: Close & Quit
                     if colored_button_full(ui, "❌  Close Mirror & Quit", RED, RED_DIM, btn_width) {
                         self.close_mirror();
                         self.show_close_warning = false;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    ui.add_space(6.0);
-                    if colored_button_full(ui, "▶  Keep Running (Minimize)", GREEN, GREEN_DIM, btn_width) {
+                    ui.add_space(8.0);
+
+                    // Green button: Minimize
+                    if colored_button_full(ui, "▶  Keep Running", GREEN, GREEN_DIM, btn_width) {
                         self.show_close_warning = false;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
-                    ui.add_space(6.0);
-                    if colored_button_full(ui, "✕  Cancel", TEXT_DIM, egui::Color32::from_rgb(40, 42, 56), btn_width) {
+                    ui.add_space(8.0);
+
+                    // Gray button: Cancel
+                    if colored_button_full(ui, "✕  Cancel", TEXT_DIM, egui::Color32::from_rgb(36, 38, 50), btn_width) {
                         self.show_close_warning = false;
                     }
                 });
