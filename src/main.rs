@@ -93,6 +93,15 @@ fn card_frame() -> egui::Frame {
         .outer_margin(egui::Margin::same(0))
 }
 
+/// Show a card at full available width
+fn show_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let width = ui.available_width();
+    card_frame().show(ui, |ui| {
+        ui.set_width(width);
+        add_contents(ui);
+    });
+}
+
 // ─── Truncate long paths ─────────────────────────────────
 
 fn truncate_path(path: &str, max_len: usize) -> String {
@@ -236,7 +245,7 @@ impl eframe::App for PhoneMirrorApp {
                     ui.add_space(10.0);
 
                     // ══ Device Status ══
-                    card_frame().show(ui, |ui| {
+                    show_card(ui, |ui| {
                         card_title(ui, "🔌", "Device Status");
                         ui.add_space(6.0);
 
@@ -263,7 +272,7 @@ impl eframe::App for PhoneMirrorApp {
                     ui.add_space(6.0);
 
                     // ══ Screen Mirror ══
-                    card_frame().show(ui, |ui| {
+                    show_card(ui, |ui| {
                         card_title(ui, "🖥️", "Screen Mirror");
                         ui.add_space(6.0);
 
@@ -294,7 +303,7 @@ impl eframe::App for PhoneMirrorApp {
                     ui.add_space(6.0);
 
                     // ══ Recording ══
-                    card_frame().show(ui, |ui| {
+                    show_card(ui, |ui| {
                         card_title(ui, "🎬", "Recording");
                         ui.add_space(6.0);
 
@@ -320,7 +329,7 @@ impl eframe::App for PhoneMirrorApp {
                     ui.add_space(6.0);
 
                     // ══ Actions ══
-                    card_frame().show(ui, |ui| {
+                    show_card(ui, |ui| {
                         card_title(ui, "⚡", "Actions");
                         ui.add_space(6.0);
 
