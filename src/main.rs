@@ -71,7 +71,6 @@ fn load_icon() -> egui::IconData {
 
 const BG: egui::Color32 = egui::Color32::from_rgb(18, 18, 26);
 const CARD_BG: egui::Color32 = egui::Color32::from_rgb(30, 32, 46);
-const CARD_HOVER: egui::Color32 = egui::Color32::from_rgb(36, 38, 54);
 const BORDER: egui::Color32 = egui::Color32::from_rgb(50, 54, 72);
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(88, 166, 255);
 const ACCENT_DIM: egui::Color32 = egui::Color32::from_rgb(30, 58, 90);
@@ -227,11 +226,8 @@ impl eframe::App for PhoneMirrorApp {
             .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(14)))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
-                    .max_width(f32::INFINITY)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width());
-
                     // ── Header ──
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new("📱 PhoneMirror").size(22.0).strong().color(ACCENT));
