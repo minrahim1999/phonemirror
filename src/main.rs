@@ -257,7 +257,7 @@ impl eframe::App for PhoneMirrorApp {
                     // ── Header ──
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new("📱 PhoneMirror").size(22.0).strong().color(ACCENT));
-                        ui.label(egui::RichText::new("v2.0.0 · Cross-platform").size(10.0).color(TEXT_DIM));
+                        ui.label(egui::RichText::new("v2.1.0 · Cross-platform").size(10.0).color(TEXT_DIM));
                     });
                     ui.add_space(10.0);
 
@@ -396,7 +396,7 @@ impl eframe::App for PhoneMirrorApp {
                             egui::RichText::new("github.com/minrahim1999/phonemirror").size(9.0).color(ACCENT),
                             "https://github.com/minrahim1999/phonemirror",
                         );
-                        ui.label(egui::RichText::new("PhoneMirror v2.0.0 · MIT License").size(9.0).color(TEXT_DIM));
+                        ui.label(egui::RichText::new("PhoneMirror v2.1.0 · MIT License").size(9.0).color(TEXT_DIM));
                     });
                 });
             });
@@ -628,13 +628,23 @@ fn adb_path() -> String {
         if std::path::PathBuf::from(&path).exists() { return path; }
         "adb.exe".to_string()
     } else if cfg!(target_os = "macos") {
-        let homebrew_sdk = format!("{}/Library/Android/sdk/platform-tools/adb", home);
-        if std::path::PathBuf::from(&homebrew_sdk).exists() { return homebrew_sdk; }
-        let homebrew = "/opt/homebrew/bin/adb".to_string();
-        if std::path::PathBuf::from(&homebrew).exists() { return homebrew; }
+        // Order: Homebrew cask → Homebrew SDK → Android SDK → fallback
+        let candidates = [
+            "/opt/homebrew/bin/adb".to_string(),
+            format!("{}/Library/Android/sdk/platform-tools/adb", home),
+            format!("{}/Android/Sdk/platform-tools/adb", home),
+            "/usr/local/bin/adb".to_string(),
+        ];
+        for candidate in &candidates {
+            if std::path::PathBuf::from(candidate).exists() { return candidate.clone(); }
+        }
         "adb".to_string()
     } else {
-        for candidate in &["/usr/bin/adb", "/usr/local/bin/adb"] {
+        for candidate in &[
+            "/usr/bin/adb",
+            "/usr/local/bin/adb",
+            &format!("{}/Android/Sdk/platform-tools/adb", home)[..],
+        ] {
             if std::path::PathBuf::from(candidate).exists() { return candidate.to_string(); }
         }
         "adb".to_string()
@@ -737,6 +747,48 @@ fn build_full_env() -> Vec<(String, String)> {
             env_pairs[pos].1 = path_parts.join(":");
         } else {
             env_pairs.push(("PATH".to_string(), essential_paths.join(":")));
+        }
+    }
+
+    // Set SCRCPY_SERVER_PATH so scrcpy can find its server jar
+    // even when launched from Finder with a minimal PATH
+    if !env_pairs.iter().any(|(k, _)| k == "SCRCPY_SERVER_PATH") {
+        if cfg!(target_os = "macos") {
+            // Auto-discover: scan Cellar for any scrcpy version, then fallback paths
+            let cellar_dir = std::path::Path::new("/opt/homebrew/Cellar/scrcpy");
+            let mut found = None;
+            if let Ok(entries) = std::fs::read_dir(cellar_dir) {
+                for entry in entries.flatten() {
+                    let server = entry.path().join("share/scrcpy/scrcpy-server");
+                    if server.exists() {
+                        found = Some(server.to_string_lossy().to_string());
+                        break;
+                    }
+                }
+            }
+            if let Some(path) = found {
+                env_pairs.push(("SCRCPY_SERVER_PATH".to_string(), path));
+            } else {
+                let fallbacks = [
+                    "/opt/homebrew/share/scrcpy/scrcpy-server",
+                    "/usr/local/share/scrcpy/scrcpy-server",
+                    "/usr/share/scrcpy/scrcpy-server",
+                ];
+                for candidate in &fallbacks {
+                    if std::path::PathBuf::from(candidate).exists() {
+                        env_pairs.push(("SCRCPY_SERVER_PATH".to_string(), candidate.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Set ADB_SERVER_PATH so scrcpy can locate the adb server binary
+    if !env_pairs.iter().any(|(k, _)| k == "ADB_SERVER_PATH") {
+        let adb = adb_path();
+        if !adb.is_empty() {
+            env_pairs.push(("ADB_SERVER_PATH".to_string(), adb));
         }
     }
 

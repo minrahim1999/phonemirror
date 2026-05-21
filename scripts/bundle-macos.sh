@@ -6,7 +6,7 @@ cargo build --release
 
 APP_NAME="PhoneMirror"
 BINARY="phonemirror"
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # Support LOCAL_BUILD=1 to build .app in project dir instead of /Applications
 if [ "${LOCAL_BUILD:-0}" = "1" ]; then
