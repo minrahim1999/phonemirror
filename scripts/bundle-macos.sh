@@ -22,6 +22,14 @@ mkdir -p "$BUNDLE/Contents/Resources"
 
 cp "target/release/$BINARY" "$BUNDLE/Contents/MacOS/$BINARY"
 
+# Copy app icon into Resources (generate first with: python3 scripts/generate-icon.py)
+if [ -f "AppIcon.icns" ]; then
+    cp AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
+    echo "🎨 App icon included"
+else
+    echo "⚠️  No AppIcon.icns found — run: python3 scripts/generate-icon.py"
+fi
+
 cat > "$BUNDLE/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -33,6 +41,8 @@ cat > "$BUNDLE/Contents/Info.plist" << PLIST
     <string>${APP_NAME}</string>
     <key>CFBundleExecutable</key>
     <string>${BINARY}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.muhaimin.phonemirror</string>
     <key>CFBundleName</key>
@@ -49,6 +59,8 @@ cat > "$BUNDLE/Contents/Info.plist" << PLIST
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array/>
 </dict>
 </plist>
 PLIST
