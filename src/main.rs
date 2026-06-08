@@ -137,6 +137,8 @@ struct PhoneMirrorApp {
 struct DeviceStatus {
     connected: bool,
     device_id: String,
+    /// The serial to pass to scrcpy/adb with -s (prefers USB over TCP/IP)
+    device_serial: String,
     adb_path: String,
     scrcpy_path: String,
     checked: bool,
@@ -148,6 +150,7 @@ impl Default for PhoneMirrorApp {
             device_status: DeviceStatus {
                 connected: false,
                 device_id: String::new(),
+                device_serial: String::new(),
                 adb_path: String::new(),
                 scrcpy_path: String::new(),
                 checked: false,
@@ -468,22 +471,39 @@ impl PhoneMirrorApp {
 
         let mut connected = false;
         let mut device_id = String::from("No device");
+        let mut device_serial = String::new();
 
         if let Ok(o) = output {
             let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+            // Collect all connected devices, preferring USB over TCP/IP
+            let mut usb_serial = String::new();
+            let mut tcpip_serial = String::new();
             for line in stdout.lines().skip(1) {
                 let trimmed = line.trim();
                 if trimmed.contains("device") && !trimmed.contains("daemon") && !trimmed.is_empty() {
-                    device_id = trimmed.split_whitespace().next().unwrap_or("unknown").to_string();
+                    let serial = trimmed.split_whitespace().next().unwrap_or("unknown").to_string();
                     connected = true;
-                    break;
+                    if serial.contains("._adb-tls-connect._tcp") {
+                        if tcpip_serial.is_empty() { tcpip_serial = serial.clone(); }
+                    } else {
+                        if usb_serial.is_empty() { usb_serial = serial.clone(); }
+                    }
                 }
+            }
+            // Prefer USB connection over TCP/IP (avoids scrcpy "Multiple ADB devices" error)
+            if !usb_serial.is_empty() {
+                device_serial = usb_serial.clone();
+                device_id = usb_serial;
+            } else if !tcpip_serial.is_empty() {
+                device_serial = tcpip_serial.clone();
+                device_id = tcpip_serial;
             }
         }
 
         self.device_status = DeviceStatus {
             connected,
             device_id,
+            device_serial,
             adb_path: adb,
             scrcpy_path: scrcpy_path(),
             checked: true,
@@ -495,22 +515,38 @@ impl PhoneMirrorApp {
     fn start_mirror(&mut self) {
         let scrcpy = scrcpy_path();
         let env = build_full_env();
-        let args: Vec<String> = if cfg!(target_os = "macos") {
-            vec!["--shortcut-mod=lctrl".to_string()]
-        } else {
-            vec![]
-        };
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let mut args: Vec<String> = vec![];
+        // Add -s serial to disambiguate when both USB and TCP/IP are connected
+        if !self.device_status.device_serial.is_empty() {
+            args.push("-s".to_string());
+            args.push(self.device_status.device_serial.clone());
+        }
+        if cfg!(target_os = "macos") {
+            args.push("--shortcut-mod=lctrl".to_string());
+        }
 
         match std::process::Command::new(&scrcpy)
-            .args(&args_refs)
+            .args(&args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .spawn()
         {
-            Ok(_) => {
-                self.mirror_running = true;
-                self.status_message = "Mirror started".to_string();
-                self.status_is_error = false;
+            Ok(mut child) => {
+                // Give scrcpy a moment to start — if it exits immediately, it's an error
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Process already exited — likely an error
+                        self.mirror_running = false;
+                        self.status_message = format!("Mirror failed (exited {})", status.code().unwrap_or(-1));
+                        self.status_is_error = true;
+                    }
+                    Ok(None) | Err(_) => {
+                        // Still running — success
+                        self.mirror_running = true;
+                        self.status_message = "Mirror started".to_string();
+                        self.status_is_error = false;
+                    }
+                }
             }
             Err(e) => {
                 self.status_message = format!("Failed: {}", e);
@@ -546,18 +582,35 @@ impl PhoneMirrorApp {
         let filename = format!("{}/phone_screenshot_{}.png", dir, timestamp);
         let remote_path = "/sdcard/phone_screenshot.png";
 
+        // Build args with -s serial if available
+        let serial = self.device_status.device_serial.clone();
+        let shell_args: Vec<String> = if !serial.is_empty() {
+            vec!["-s".to_string(), serial.clone(), "shell".to_string(), "screencap".to_string(), "-p".to_string(), remote_path.to_string()]
+        } else {
+            vec!["shell".to_string(), "screencap".to_string(), "-p".to_string(), remote_path.to_string()]
+        };
         let _ = std::process::Command::new(&adb)
-            .args(["shell", "screencap", "-p", remote_path])
+            .args(&shell_args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .status();
 
+        let pull_args: Vec<String> = if !serial.is_empty() {
+            vec!["-s".to_string(), serial.clone(), "pull".to_string(), remote_path.to_string(), filename.clone()]
+        } else {
+            vec!["pull".to_string(), remote_path.to_string(), filename.clone()]
+        };
         let pull_result = std::process::Command::new(&adb)
-            .args(["pull", remote_path, &filename])
+            .args(&pull_args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .status();
 
+        let rm_args: Vec<String> = if !serial.is_empty() {
+            vec!["-s".to_string(), serial, "shell".to_string(), "rm".to_string(), remote_path.to_string()]
+        } else {
+            vec!["shell".to_string(), "rm".to_string(), remote_path.to_string()]
+        };
         let _ = std::process::Command::new(&adb)
-            .args(["shell", "rm", remote_path])
+            .args(&rm_args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .status();
 
@@ -580,15 +633,36 @@ impl PhoneMirrorApp {
         let dir = recordings_dir();
         let filename = format!("{}/phone_recording_{}.mp4", dir, timestamp);
 
+        let mut args: Vec<String> = vec![];
+        // Add -s serial to disambiguate when both USB and TCP/IP are connected
+        if !self.device_status.device_serial.is_empty() {
+            args.push("-s".to_string());
+            args.push(self.device_status.device_serial.clone());
+        }
+        args.extend(["--record".to_string(), filename.clone(), "--no-playback".to_string(), "--no-audio".to_string(), "--no-window".to_string()]);
+
         match std::process::Command::new(&scrcpy)
-            .args(["--record", &filename, "--no-playback", "--no-audio", "--no-window"])
+            .args(&args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .spawn()
         {
-            Ok(_) => {
-                self.is_recording = true;
-                self.status_message = "Recording started".to_string();
-                self.status_is_error = false;
+            Ok(mut child) => {
+                // Give scrcpy a moment to start — if it exits immediately, it's an error
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Process already exited — recording failed
+                        self.is_recording = false;
+                        self.status_message = format!("Recording failed (exited {})", status.code().unwrap_or(-1));
+                        self.status_is_error = true;
+                    }
+                    Ok(None) | Err(_) => {
+                        // Still running — success
+                        self.is_recording = true;
+                        self.status_message = format!("Recording started → {}", filename);
+                        self.status_is_error = false;
+                    }
+                }
             }
             Err(e) => {
                 self.status_message = format!("Failed: {}", e);
@@ -680,7 +754,9 @@ fn screenshots_dir() -> String {
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| "/".to_string());
     if cfg!(target_os = "macos") {
-        format!("{}/Pictures", home)
+        let path = format!("{}/Pictures/PhoneMirror", home);
+        let _ = std::fs::create_dir_all(&path);
+        path
     } else if cfg!(target_os = "windows") {
         let path = format!("{}\\Pictures\\PhoneMirror", home);
         let _ = std::fs::create_dir_all(&path);
@@ -697,7 +773,9 @@ fn recordings_dir() -> String {
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| "/".to_string());
     if cfg!(target_os = "macos") {
-        format!("{}/Movies", home)
+        let path = format!("{}/Movies/PhoneMirror", home);
+        let _ = std::fs::create_dir_all(&path);
+        path
     } else if cfg!(target_os = "windows") {
         let path = format!("{}\\Videos\\PhoneMirror", home);
         let _ = std::fs::create_dir_all(&path);
