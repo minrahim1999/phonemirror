@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::time::{Duration, Instant};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 fn main() -> eframe::Result {
     let icon = load_icon();
@@ -67,6 +69,15 @@ fn load_icon() -> egui::IconData {
     egui::IconData { rgba, width: size, height: size }
 }
 
+fn load_tray_icon_data() -> egui::IconData {
+    // Bright red 16×16 solid square for visibility testing
+    let mut rgba = Vec::with_capacity(16 * 16 * 4);
+    for _ in 0..(16 * 16) {
+        rgba.extend_from_slice(&[255u8, 50, 50, 255]); // bright red, fully opaque
+    }
+    egui::IconData { rgba, width: 16, height: 16 }
+}
+
 // ─── Colors ───────────────────────────────────────────────
 
 const BG: egui::Color32 = egui::Color32::from_rgb(18, 18, 26);
@@ -131,6 +142,9 @@ struct PhoneMirrorApp {
     last_refresh: Instant,
     pulse_time: f32,
     show_close_warning: bool,
+    #[allow(dead_code)]
+    tray_icon: Rc<RefCell<Option<tray_icon::TrayIcon>>>,
+    tray_icon_created: bool,
 }
 
 #[derive(Clone)]
@@ -162,6 +176,8 @@ impl Default for PhoneMirrorApp {
             last_refresh: Instant::now(),
             pulse_time: 0.0,
             show_close_warning: false,
+            tray_icon: Rc::new(RefCell::new(None)),
+            tray_icon_created: false,
         }
     }
 }
@@ -190,6 +206,70 @@ impl eframe::App for PhoneMirrorApp {
             if self.mirror_running || self.is_recording {
                 self.show_close_warning = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+        }
+
+        // ── Tray icon setup ──
+        if !self.tray_icon_created {
+            self.tray_icon_created = true;
+            let tray_menu = muda::Menu::new();
+            tray_menu.append(&muda::MenuItem::new("Show PhoneMirror", true, None)).ok();
+            tray_menu.append(&muda::PredefinedMenuItem::separator()).ok();
+            tray_menu.append(&muda::MenuItem::new("Screenshot", true, None)).ok();
+            tray_menu.append(&muda::PredefinedMenuItem::separator()).ok();
+            tray_menu.append(&muda::MenuItem::new("Quit", true, None)).ok();
+
+            let icon_data = load_tray_icon_data();
+            match tray_icon::Icon::from_rgba(icon_data.rgba, icon_data.width, icon_data.height) {
+                Ok(icon) => {
+                    match tray_icon::TrayIconBuilder::new()
+                        .with_menu(Box::new(tray_menu))
+                        .with_tooltip("PhoneMirror")
+                        .with_icon(icon)
+                        .build()
+                    {
+                        Ok(tray) => {
+                            eprintln!("[PhoneMirror] Tray icon created successfully");
+                            *self.tray_icon.borrow_mut() = Some(tray);
+                        }
+                        Err(e) => {
+                            eprintln!("[PhoneMirror] TrayIconBuilder failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[PhoneMirror] Icon::from_rgba failed: {}", e);
+                }
+            }
+        }
+
+        // ── Tray click events ──
+        if let Ok(_event) = tray_icon::TrayIconEvent::receiver().try_recv() {
+            eprintln!("[PhoneMirror] Tray clicked -> show window");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        // ── Tray menu events ──
+        if let Ok(event) = muda::MenuEvent::receiver().try_recv() {
+            match event.id.0.as_str() {
+                "Show PhoneMirror" => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                "Screenshot" => {
+                    self.take_screenshot();
+                }
+                "Quit" => {
+                    if self.mirror_running || self.is_recording {
+                        self.show_close_warning = true;
+                    } else {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -238,8 +318,9 @@ impl eframe::App for PhoneMirrorApp {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         ui.add_space(4.0);
-                        if colored_button_full(ui, "▶  Keep Running", GREEN, GREEN_DIM, btn_width) {
+                        if colored_button_full(ui, "▶  Keep Running (Tray)", GREEN, GREEN_DIM, btn_width) {
                             self.show_close_warning = false;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
                         ui.add_space(4.0);

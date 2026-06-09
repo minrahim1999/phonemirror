@@ -2769,6 +2769,7 @@ dependencies = [
  "chrono",
  "eframe",
  "egui",
+ "muda",
  "tray-icon",
 ]
 
