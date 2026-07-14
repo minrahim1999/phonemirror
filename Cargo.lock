@@ -2770,6 +2770,8 @@ dependencies = [
  "eframe",
  "egui",
  "muda",
+ "serde",
+ "serde_json",
  "tray-icon",
 ]
 

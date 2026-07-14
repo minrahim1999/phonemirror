@@ -1,11 +1,84 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::time::{Duration, Instant};
-use std::cell::RefCell;
-use std::rc::Rc;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AppConfig {
+    adb_path: String,
+    scrcpy_path: String,
+    android_sdk_path: String,
+}
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            adb_path: default_adb_path(),
+            scrcpy_path: default_scrcpy_path(),
+            android_sdk_path: default_android_sdk_path(),
+        }
+    }
+}
+impl AppConfig {
+    fn config_file() -> std::path::PathBuf {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| "/".to_string());
+        std::path::PathBuf::from(format!("{}/.phonemirror-config.json", home))
+    }
+    fn load() -> Self {
+        let path = Self::config_file();
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = serde_json::from_str::<Self>(&data) {
+                return cfg;
+            }
+        }
+        let cfg = Self::default();
+        let _ = cfg.save();
+        cfg
+    }
+    fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(Self::config_file(), json)?;
+        Ok(())
+    }
+}
+
+// Default paths (current macOS defaults preserved)
+fn default_adb_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let candidates = [
+        "/opt/homebrew/bin/adb".to_string(),
+        format!("{}/Library/Android/sdk/platform-tools/adb", home),
+        format!("{}/Android/Sdk/platform-tools/adb", home),
+        "/usr/local/bin/adb".to_string(),
+    ];
+    for c in &candidates {
+        if std::path::PathBuf::from(c).exists() { return c.clone(); }
+    }
+    "adb".to_string()
+}
+fn default_scrcpy_path() -> String {
+    let c = "/opt/homebrew/bin/scrcpy".to_string();
+    if std::path::PathBuf::from(&c).exists() { return c; }
+    "scrcpy".to_string()
+}
+fn default_android_sdk_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let candidates = [
+        format!("{}/Library/Android/sdk", home),
+        format!("{}/Android/Sdk", home),
+    ];
+    for c in &candidates {
+        if std::path::PathBuf::from(c).exists() { return c.clone(); }
+    }
+    String::new()
+}
 
 fn main() -> eframe::Result {
     let icon = load_icon();
+
+    // Create tray icon early (macOS needs it outside update cycle)
+    let _tray = create_tray_icon();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -20,6 +93,41 @@ fn main() -> eframe::Result {
         options,
         Box::new(|_cc| Ok(Box::new(PhoneMirrorApp::default()))),
     )
+}
+
+fn create_tray_icon() -> Option<tray_icon::TrayIcon> {
+    let tray_menu = muda::Menu::new();
+    tray_menu.append(&muda::MenuItem::new("Show PhoneMirror", true, None)).ok();
+    tray_menu.append(&muda::PredefinedMenuItem::separator()).ok();
+    tray_menu.append(&muda::MenuItem::new("Screenshot", true, None)).ok();
+    tray_menu.append(&muda::MenuItem::new("Record", true, None)).ok();
+    tray_menu.append(&muda::PredefinedMenuItem::separator()).ok();
+    tray_menu.append(&muda::MenuItem::new("Quit", true, None)).ok();
+
+    let icon_data = load_tray_icon_data();
+    match tray_icon::Icon::from_rgba(icon_data.rgba, icon_data.width, icon_data.height) {
+        Ok(icon) => {
+            match tray_icon::TrayIconBuilder::new()
+                .with_menu(Box::new(tray_menu))
+                .with_tooltip("PhoneMirror")
+                .with_icon(icon)
+                .build()
+            {
+                Ok(tray) => {
+                    eprintln!("[PhoneMirror] Tray icon created successfully");
+                    Some(tray)
+                }
+                Err(e) => {
+                    eprintln!("[PhoneMirror] TrayIconBuilder failed: {}", e);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[PhoneMirror] Icon::from_rgba failed: {}", e);
+            None
+        }
+    }
 }
 
 fn load_icon() -> egui::IconData {
@@ -142,9 +250,12 @@ struct PhoneMirrorApp {
     last_refresh: Instant,
     pulse_time: f32,
     show_close_warning: bool,
+    show_settings: bool,
+    config: AppConfig,
+    config_edit: AppConfig,
+    config_error: String,
     #[allow(dead_code)]
-    tray_icon: Rc<RefCell<Option<tray_icon::TrayIcon>>>,
-    tray_icon_created: bool,
+    _tray_placeholder: Option<bool>, // tray icon lives in main()
 }
 
 #[derive(Clone)]
@@ -160,13 +271,14 @@ struct DeviceStatus {
 
 impl Default for PhoneMirrorApp {
     fn default() -> Self {
+        let cfg = AppConfig::load();
         Self {
             device_status: DeviceStatus {
                 connected: false,
                 device_id: String::new(),
                 device_serial: String::new(),
-                adb_path: String::new(),
-                scrcpy_path: String::new(),
+                adb_path: cfg.adb_path.clone(),
+                scrcpy_path: cfg.scrcpy_path.clone(),
                 checked: false,
             },
             mirror_running: false,
@@ -176,8 +288,11 @@ impl Default for PhoneMirrorApp {
             last_refresh: Instant::now(),
             pulse_time: 0.0,
             show_close_warning: false,
-            tray_icon: Rc::new(RefCell::new(None)),
-            tray_icon_created: false,
+            show_settings: false,
+            config: cfg.clone(),
+            config_edit: cfg.clone(),
+            config_error: String::new(),
+            _tray_placeholder: None,
         }
     }
 }
@@ -200,55 +315,12 @@ impl eframe::App for PhoneMirrorApp {
         style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
         ctx.set_style(style);
 
-        // ── Close interception ──
+        // ── Close interception — always hide to tray, never quit ──
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         if close_requested {
-            if self.mirror_running || self.is_recording {
-                self.show_close_warning = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            }
-        }
-
-        // ── Tray icon setup ──
-        if !self.tray_icon_created {
-            self.tray_icon_created = true;
-            let tray_menu = muda::Menu::new();
-            tray_menu.append(&muda::MenuItem::new("Show PhoneMirror", true, None)).ok();
-            tray_menu.append(&muda::PredefinedMenuItem::separator()).ok();
-            tray_menu.append(&muda::MenuItem::new("Screenshot", true, None)).ok();
-            tray_menu.append(&muda::PredefinedMenuItem::separator()).ok();
-            tray_menu.append(&muda::MenuItem::new("Quit", true, None)).ok();
-
-            let icon_data = load_tray_icon_data();
-            match tray_icon::Icon::from_rgba(icon_data.rgba, icon_data.width, icon_data.height) {
-                Ok(icon) => {
-                    match tray_icon::TrayIconBuilder::new()
-                        .with_menu(Box::new(tray_menu))
-                        .with_tooltip("PhoneMirror")
-                        .with_icon(icon)
-                        .build()
-                    {
-                        Ok(tray) => {
-                            eprintln!("[PhoneMirror] Tray icon created successfully");
-                            *self.tray_icon.borrow_mut() = Some(tray);
-                        }
-                        Err(e) => {
-                            eprintln!("[PhoneMirror] TrayIconBuilder failed: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[PhoneMirror] Icon::from_rgba failed: {}", e);
-                }
-            }
-        }
-
-        // ── Tray click events ──
-        if let Ok(_event) = tray_icon::TrayIconEvent::receiver().try_recv() {
-            eprintln!("[PhoneMirror] Tray clicked -> show window");
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.show_close_warning = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
 
         // ── Tray menu events ──
@@ -261,6 +333,11 @@ impl eframe::App for PhoneMirrorApp {
                 }
                 "Screenshot" => {
                     self.take_screenshot();
+                }
+                "Record" => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    self.start_recording();
                 }
                 "Quit" => {
                     if self.mirror_running || self.is_recording {
@@ -326,6 +403,102 @@ impl eframe::App for PhoneMirrorApp {
                         ui.add_space(4.0);
                         if colored_button_full(ui, "✕  Cancel", egui::Color32::from_rgb(180, 184, 200), egui::Color32::from_rgb(48, 50, 66), btn_width) {
                             self.show_close_warning = false;
+                        }
+                    });
+                });
+        }
+
+        // ── Settings dialog ──
+        if self.show_settings {
+            let dialog_width = 340.0;
+            ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("settings_overlay")))
+                .rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_rgba_premultiplied(0, 0, 0, 120));
+
+            egui::Window::new("")
+                .collapsible(false)
+                .resizable(false)
+                .title_bar(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .frame(egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(42, 44, 60))
+                    .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 104, 120)))
+                    .corner_radius(12)
+                    .inner_margin(egui::Margin::symmetric(20, 16)))
+                .show(ctx, |ui| {
+                    ui.set_width(dialog_width);
+
+                    ui.vertical_centered(|ui| {
+                        ui.label(egui::RichText::new("⚙️ Settings").size(16.0).strong().color(egui::Color32::WHITE));
+                        ui.label(egui::RichText::new("Override tool paths (leave blank to use defaults)").size(11.0).color(TEXT_DIM));
+                    });
+                    ui.add_space(12.0);
+
+                    // ADB path
+                    ui.horizontal(|ui| {
+                        ui.set_width(LABEL_W);
+                        ui.label(egui::RichText::new("ADB:").size(12.0).color(TEXT_DIM));
+                    });
+                    ui.add_sized(
+                        [dialog_width - 40.0, 28.0],
+                        egui::TextEdit::singleline(&mut self.config_edit.adb_path)
+                            .font(egui::FontId::monospace(11.0))
+                            .hint_text(default_adb_path()),
+                    );
+                    ui.add_space(8.0);
+
+                    // scrcpy path
+                    ui.horizontal(|ui| {
+                        ui.set_width(LABEL_W);
+                        ui.label(egui::RichText::new("scrcpy:").size(12.0).color(TEXT_DIM));
+                    });
+                    ui.add_sized(
+                        [dialog_width - 40.0, 28.0],
+                        egui::TextEdit::singleline(&mut self.config_edit.scrcpy_path)
+                            .font(egui::FontId::monospace(11.0))
+                            .hint_text(default_scrcpy_path()),
+                    );
+                    ui.add_space(8.0);
+
+                    // Android SDK path
+                    ui.horizontal(|ui| {
+                        ui.set_width(LABEL_W);
+                        ui.label(egui::RichText::new("Android SDK:").size(12.0).color(TEXT_DIM));
+                    });
+                    ui.add_sized(
+                        [dialog_width - 40.0, 28.0],
+                        egui::TextEdit::singleline(&mut self.config_edit.android_sdk_path)
+                            .font(egui::FontId::monospace(11.0))
+                            .hint_text(default_android_sdk_path()),
+                    );
+                    ui.add_space(8.0);
+
+                    // Error message
+                    if !self.config_error.is_empty() {
+                        ui.label(egui::RichText::new(&self.config_error).size(11.0).color(RED));
+                        ui.add_space(4.0);
+                    }
+
+                    // Buttons
+                    ui.add_space(8.0);
+                    let btn_width = dialog_width - 40.0;
+                    ui.vertical_centered(|ui| {
+                        ui.set_width(btn_width);
+                        if colored_button_full(ui, "💾 Save", GREEN, GREEN_DIM, btn_width) {
+                            if let Err(e) = self.save_config() {
+                                self.config_error = e;
+                            }
+                        }
+                        ui.add_space(4.0);
+                        if colored_button_full(ui, "↩ Reset to Defaults", YELLOW, egui::Color32::from_rgb(60, 50, 20), btn_width) {
+                            self.config_edit = AppConfig::default();
+                            if let Err(e) = self.save_config_from_edit() {
+                                self.config_error = e;
+                            }
+                        }
+                        ui.add_space(4.0);
+                        if colored_button_full(ui, "✕ Cancel", egui::Color32::from_rgb(180, 184, 200), egui::Color32::from_rgb(48, 50, 66), btn_width) {
+                            self.show_settings = false;
+                            self.config_error.clear();
                         }
                     });
                 });
@@ -438,6 +611,11 @@ impl eframe::App for PhoneMirrorApp {
                             if colored_button(ui, "🔄 Refresh", TEXT_DIM, CARD_BG) {
                                 self.refresh_device();
                             }
+                            if colored_button(ui, "⚙️ Settings", ACCENT, ACCENT_DIM) {
+                                self.show_settings = true;
+                                self.config_edit = self.config.clone();
+                                self.config_error.clear();
+                            }
                             if colored_button(ui, "📵 Force Close", RED, RED_DIM) {
                                 self.close_mirror();
                             }
@@ -543,8 +721,17 @@ fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
 
 impl PhoneMirrorApp {
     fn refresh_device(&mut self) {
-        let adb = adb_path();
-        let env = build_full_env();
+        let adb = if self.config.adb_path.is_empty() {
+            default_adb_path()
+        } else {
+            self.config.adb_path.clone()
+        };
+        let sdk = if self.config.android_sdk_path.is_empty() {
+            None
+        } else {
+            Some(self.config.android_sdk_path.as_str())
+        };
+        let env = build_full_env_with_sdk(sdk);
         let output = std::process::Command::new(&adb)
             .args(["devices"])
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
@@ -586,7 +773,11 @@ impl PhoneMirrorApp {
             device_id,
             device_serial,
             adb_path: adb,
-            scrcpy_path: scrcpy_path(),
+            scrcpy_path: if self.config.scrcpy_path.is_empty() {
+                default_scrcpy_path()
+            } else {
+                self.config.scrcpy_path.clone()
+            },
             checked: true,
         };
         self.mirror_running = is_mirror_running();
@@ -594,8 +785,17 @@ impl PhoneMirrorApp {
     }
 
     fn start_mirror(&mut self) {
-        let scrcpy = scrcpy_path();
-        let env = build_full_env();
+        let scrcpy = if self.config.scrcpy_path.is_empty() {
+            default_scrcpy_path()
+        } else {
+            self.config.scrcpy_path.clone()
+        };
+        let sdk = if self.config.android_sdk_path.is_empty() {
+            None
+        } else {
+            Some(self.config.android_sdk_path.as_str())
+        };
+        let env = build_full_env_with_sdk(sdk);
         let mut args: Vec<String> = vec![];
         // Add -s serial to disambiguate when both USB and TCP/IP are connected
         if !self.device_status.device_serial.is_empty() {
@@ -637,7 +837,12 @@ impl PhoneMirrorApp {
     }
 
     fn close_mirror(&mut self) {
-        let env = build_full_env();
+        let sdk = if self.config.android_sdk_path.is_empty() {
+            None
+        } else {
+            Some(self.config.android_sdk_path.as_str())
+        };
+        let env = build_full_env_with_sdk(sdk);
         if cfg!(target_os = "windows") {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/IM", "scrcpy.exe"])
@@ -656,8 +861,17 @@ impl PhoneMirrorApp {
     }
 
     fn take_screenshot(&mut self) {
-        let adb = adb_path();
-        let env = build_full_env();
+        let adb = if self.config.adb_path.is_empty() {
+            default_adb_path()
+        } else {
+            self.config.adb_path.clone()
+        };
+        let sdk = if self.config.android_sdk_path.is_empty() {
+            None
+        } else {
+            Some(self.config.android_sdk_path.as_str())
+        };
+        let env = build_full_env_with_sdk(sdk);
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
         let dir = screenshots_dir();
         let filename = format!("{}/phone_screenshot_{}.png", dir, timestamp);
@@ -708,8 +922,17 @@ impl PhoneMirrorApp {
     }
 
     fn start_recording(&mut self) {
-        let scrcpy = scrcpy_path();
-        let env = build_full_env();
+        let scrcpy = if self.config.scrcpy_path.is_empty() {
+            default_scrcpy_path()
+        } else {
+            self.config.scrcpy_path.clone()
+        };
+        let sdk = if self.config.android_sdk_path.is_empty() {
+            None
+        } else {
+            Some(self.config.android_sdk_path.as_str())
+        };
+        let env = build_full_env_with_sdk(sdk);
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
         let dir = recordings_dir();
         let filename = format!("{}/phone_recording_{}.mp4", dir, timestamp);
@@ -753,7 +976,12 @@ impl PhoneMirrorApp {
     }
 
     fn stop_recording(&mut self) {
-        let env = build_full_env();
+        let sdk = if self.config.android_sdk_path.is_empty() {
+            None
+        } else {
+            Some(self.config.android_sdk_path.as_str())
+        };
+        let env = build_full_env_with_sdk(sdk);
         if cfg!(target_os = "windows") {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/IM", "scrcpy.exe"])
@@ -769,66 +997,51 @@ impl PhoneMirrorApp {
         self.status_message = "Recording stopped".to_string();
         self.status_is_error = false;
     }
+
+    fn save_config(&mut self) -> Result<(), String> {
+        self.save_config_from_edit()
+    }
+
+    fn save_config_from_edit(&mut self) -> Result<(), String> {
+        // Validate: if non-empty, the binary must exist
+        if !self.config_edit.adb_path.is_empty()
+            && !std::path::PathBuf::from(&self.config_edit.adb_path).exists()
+        {
+            return Err(format!("ADB not found: {}", self.config_edit.adb_path));
+        }
+        if !self.config_edit.scrcpy_path.is_empty()
+            && !std::path::PathBuf::from(&self.config_edit.scrcpy_path).exists()
+        {
+            return Err(format!("scrcpy not found: {}", self.config_edit.scrcpy_path));
+        }
+        if !self.config_edit.android_sdk_path.is_empty()
+            && !std::path::PathBuf::from(&self.config_edit.android_sdk_path).exists()
+        {
+            return Err(format!("Android SDK not found: {}", self.config_edit.android_sdk_path));
+        }
+        self.config = self.config_edit.clone();
+        if let Err(e) = self.config.save() {
+            return Err(format!("Failed to save config: {}", e));
+        }
+        // Update paths in device_status too so they take effect immediately
+        self.device_status.adb_path = if self.config.adb_path.is_empty() {
+            default_adb_path()
+        } else {
+            self.config.adb_path.clone()
+        };
+        self.device_status.scrcpy_path = if self.config.scrcpy_path.is_empty() {
+            default_scrcpy_path()
+        } else {
+            self.config.scrcpy_path.clone()
+        };
+        self.status_message = "Settings saved".to_string();
+        self.status_is_error = false;
+        self.show_settings = false;
+        Ok(())
+    }
 }
 
 // ─── Platform Paths ────────────────────────────────────────
-
-fn adb_path() -> String {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| "/".to_string());
-
-    if cfg!(target_os = "windows") {
-        let path = format!("{}\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe", home);
-        if std::path::PathBuf::from(&path).exists() { return path; }
-        "adb.exe".to_string()
-    } else if cfg!(target_os = "macos") {
-        // Order: Homebrew cask → Homebrew SDK → Android SDK → fallback
-        let candidates = [
-            "/opt/homebrew/bin/adb".to_string(),
-            format!("{}/Library/Android/sdk/platform-tools/adb", home),
-            format!("{}/Android/Sdk/platform-tools/adb", home),
-            "/usr/local/bin/adb".to_string(),
-        ];
-        for candidate in &candidates {
-            if std::path::PathBuf::from(candidate).exists() { return candidate.clone(); }
-        }
-        "adb".to_string()
-    } else {
-        for candidate in &[
-            "/usr/bin/adb",
-            "/usr/local/bin/adb",
-            &format!("{}/Android/Sdk/platform-tools/adb", home)[..],
-        ] {
-            if std::path::PathBuf::from(candidate).exists() { return candidate.to_string(); }
-        }
-        "adb".to_string()
-    }
-}
-
-fn scrcpy_path() -> String {
-    if cfg!(target_os = "windows") {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string());
-        let candidates = [
-            format!("{}\\scoop\\shims\\scrcpy.exe", home),
-            "C:\\Program Files\\scrcpy\\scrcpy.exe".to_string(),
-            format!("{}\\AppData\\Local\\Microsoft\\WinGet\\Links\\scrcpy.exe", home),
-        ];
-        for candidate in &candidates {
-            if std::path::PathBuf::from(candidate).exists() { return candidate.clone(); }
-        }
-        "scrcpy.exe".to_string()
-    } else if cfg!(target_os = "macos") {
-        let path = "/opt/homebrew/bin/scrcpy".to_string();
-        if std::path::PathBuf::from(&path).exists() { return path; }
-        "scrcpy".to_string()
-    } else {
-        for candidate in &["/usr/bin/scrcpy", "/usr/local/bin/scrcpy", "/snap/bin/scrcpy"] {
-            if std::path::PathBuf::from(candidate).exists() { return candidate.to_string(); }
-        }
-        "scrcpy".to_string()
-    }
-}
 
 fn screenshots_dir() -> String {
     let home = std::env::var("HOME")
@@ -869,6 +1082,10 @@ fn recordings_dir() -> String {
 }
 
 fn build_full_env() -> Vec<(String, String)> {
+    build_full_env_with_sdk(None)
+}
+
+fn build_full_env_with_sdk(android_sdk_path: Option<&str>) -> Vec<(String, String)> {
     let essential_paths = if cfg!(target_os = "macos") {
         vec![
             "/opt/homebrew/bin",
@@ -903,17 +1120,29 @@ fn build_full_env() -> Vec<(String, String)> {
                     path_parts.push(p);
                 }
             }
+            if let Some(sdk) = android_sdk_path {
+                if !sdk.is_empty() {
+                    let pt = format!("{}/platform-tools", sdk);
+                    if !path_parts.contains(&pt) {
+                        path_parts.push(pt);
+                    }
+                }
+            }
             env_pairs[pos].1 = path_parts.join(":");
         } else {
-            env_pairs.push(("PATH".to_string(), essential_paths.join(":")));
+            let mut paths = essential_paths.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            if let Some(sdk) = android_sdk_path {
+                if !sdk.is_empty() {
+                    paths.push(format!("{}/platform-tools", sdk));
+                }
+            }
+            env_pairs.push(("PATH".to_string(), paths.join(":")));
         }
     }
 
     // Set SCRCPY_SERVER_PATH so scrcpy can find its server jar
-    // even when launched from Finder with a minimal PATH
     if !env_pairs.iter().any(|(k, _)| k == "SCRCPY_SERVER_PATH") {
         if cfg!(target_os = "macos") {
-            // Auto-discover: scan Cellar for any scrcpy version, then fallback paths
             let cellar_dir = std::path::Path::new("/opt/homebrew/Cellar/scrcpy");
             let mut found = None;
             if let Ok(entries) = std::fs::read_dir(cellar_dir) {
@@ -943,11 +1172,32 @@ fn build_full_env() -> Vec<(String, String)> {
         }
     }
 
-    // Set ADB_SERVER_PATH so scrcpy can locate the adb server binary
+    // Set ADB_SERVER_PATH
     if !env_pairs.iter().any(|(k, _)| k == "ADB_SERVER_PATH") {
-        let adb = adb_path();
+        let adb = if let Some(sdk) = android_sdk_path {
+            if !sdk.is_empty() {
+                let p = format!("{}/platform-tools/adb", sdk);
+                if std::path::PathBuf::from(&p).exists() { p } else { default_adb_path() }
+            } else {
+                default_adb_path()
+            }
+        } else {
+            default_adb_path()
+        };
         if !adb.is_empty() {
             env_pairs.push(("ADB_SERVER_PATH".to_string(), adb));
+        }
+    }
+
+    // ANDROID_HOME / ANDROID_SDK_ROOT for tools that need it
+    if let Some(sdk) = android_sdk_path {
+        if !sdk.is_empty() {
+            if !env_pairs.iter().any(|(k, _)| k == "ANDROID_HOME") {
+                env_pairs.push(("ANDROID_HOME".to_string(), sdk.to_string()));
+            }
+            if !env_pairs.iter().any(|(k, _)| k == "ANDROID_SDK_ROOT") {
+                env_pairs.push(("ANDROID_SDK_ROOT".to_string(), sdk.to_string()));
+            }
         }
     }
 
