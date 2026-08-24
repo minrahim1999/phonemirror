@@ -141,6 +141,9 @@ struct DeviceStatus {
     device_serial: String,
     adb_path: String,
     scrcpy_path: String,
+    /// Empty when scrcpy launches cleanly; otherwise an actionable reason
+    /// (e.g. broken Homebrew linkage after an ffmpeg upgrade)
+    scrcpy_health: String,
     checked: bool,
 }
 
@@ -153,6 +156,7 @@ impl Default for PhoneMirrorApp {
                 device_serial: String::new(),
                 adb_path: String::new(),
                 scrcpy_path: String::new(),
+                scrcpy_health: String::new(),
                 checked: false,
             },
             mirror_running: false,
@@ -260,7 +264,7 @@ impl eframe::App for PhoneMirrorApp {
                     // ── Header ──
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new("📱 PhoneMirror").size(22.0).strong().color(ACCENT));
-                        ui.label(egui::RichText::new("v2.1.0 · Cross-platform").size(10.0).color(TEXT_DIM));
+                        ui.label(egui::RichText::new("v2.2.0 · Cross-platform").size(10.0).color(TEXT_DIM));
                     });
                     ui.add_space(10.0);
 
@@ -286,6 +290,29 @@ impl eframe::App for PhoneMirrorApp {
                             ui.add_space(4.0);
                             info_row(ui, "ADB", truncate_path(&self.device_status.adb_path, 35).as_str());
                             info_row(ui, "scrcpy", truncate_path(&self.device_status.scrcpy_path, 35).as_str());
+                        }
+
+                        if self.device_status.checked && !self.device_status.scrcpy_health.is_empty() {
+                            ui.add_space(6.0);
+                            egui::Frame::new()
+                                .fill(RED_DIM)
+                                .stroke(egui::Stroke::new(1.0, RED))
+                                .corner_radius(8)
+                                .inner_margin(egui::Margin::symmetric(10, 8))
+                                .show(ui, |ui| {
+                                    ui.colored_label(YELLOW, egui::RichText::new("⚠ scrcpy problem").size(11.0).strong());
+                                    ui.label(
+                                        egui::RichText::new(&self.device_status.scrcpy_health)
+                                            .size(10.0)
+                                            .color(TEXT)
+                                            .monospace(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new("Run: brew upgrade scrcpy (macOS) or reinstall scrcpy")
+                                            .size(10.0)
+                                            .color(TEXT_DIM),
+                                    );
+                                });
                         }
                     });
 
@@ -399,7 +426,7 @@ impl eframe::App for PhoneMirrorApp {
                             egui::RichText::new("github.com/minrahim1999/phonemirror").size(9.0).color(ACCENT),
                             "https://github.com/minrahim1999/phonemirror",
                         );
-                        ui.label(egui::RichText::new("PhoneMirror v2.1.0 · MIT License").size(9.0).color(TEXT_DIM));
+                        ui.label(egui::RichText::new("PhoneMirror v2.2.0 · MIT License").size(9.0).color(TEXT_DIM));
                     });
                 });
             });
@@ -506,6 +533,7 @@ impl PhoneMirrorApp {
             device_serial,
             adb_path: adb,
             scrcpy_path: scrcpy_path(),
+            scrcpy_health: scrcpy_health(),
             checked: true,
         };
         self.mirror_running = is_mirror_running();
@@ -528,6 +556,7 @@ impl PhoneMirrorApp {
         match std::process::Command::new(&scrcpy)
             .args(&args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .stderr(std::process::Stdio::piped())
             .spawn()
         {
             Ok(mut child) => {
@@ -535,9 +564,15 @@ impl PhoneMirrorApp {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        // Process already exited — likely an error
+                        // Process already exited — capture its stderr for an actionable reason
+                        let reason = if let Ok(output) = child.wait_with_output() {
+                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            if !stderr.is_empty() { stderr } else { output.status.to_string() }
+                        } else {
+                            status.to_string()
+                        };
                         self.mirror_running = false;
-                        self.status_message = format!("Mirror failed (exited {})", status.code().unwrap_or(-1));
+                        self.status_message = format!("Mirror failed: {}", reason);
                         self.status_is_error = true;
                     }
                     Ok(None) | Err(_) => {
@@ -644,6 +679,7 @@ impl PhoneMirrorApp {
         match std::process::Command::new(&scrcpy)
             .args(&args)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .stderr(std::process::Stdio::piped())
             .spawn()
         {
             Ok(mut child) => {
@@ -651,9 +687,15 @@ impl PhoneMirrorApp {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        // Process already exited — recording failed
+                        // Process already exited — capture its stderr for an actionable reason
+                        let reason = if let Ok(output) = child.wait_with_output() {
+                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            if !stderr.is_empty() { stderr } else { output.status.to_string() }
+                        } else {
+                            status.to_string()
+                        };
                         self.is_recording = false;
-                        self.status_message = format!("Recording failed (exited {})", status.code().unwrap_or(-1));
+                        self.status_message = format!("Recording failed: {}", reason);
                         self.status_is_error = true;
                     }
                     Ok(None) | Err(_) => {
@@ -746,6 +788,34 @@ fn scrcpy_path() -> String {
             if std::path::PathBuf::from(candidate).exists() { return candidate.to_string(); }
         }
         "scrcpy".to_string()
+    }
+}
+
+/// Probe scrcpy with `--version`. Returns an actionable reason when it cannot run,
+/// or an empty string when it launches cleanly. Catches broken installs early —
+/// e.g. macOS dyld errors after a Homebrew ffmpeg major upgrade leave a *present*
+/// scrcpy binary that crashes instantly on launch.
+fn scrcpy_health() -> String {
+    let scrcpy = scrcpy_path();
+    let env = build_full_env();
+    let result = std::process::Command::new(&scrcpy)
+        .arg("--version")
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => String::new(),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() { stderr } else { stdout };
+            if detail.is_empty() {
+                format!("scrcpy exited with code {}", output.status.code().unwrap_or(-1))
+            } else {
+                detail
+            }
+        }
+        Err(e) => format!("{}", e),
     }
 }
 

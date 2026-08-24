@@ -5,6 +5,19 @@ All notable changes to PhoneMirror will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-08-24
+
+### Added
+- **scrcpy health check**: the app now probes `scrcpy --version` on each device
+  refresh and shows an actionable warning card in Device Status when scrcpy is
+  present but cannot launch (e.g. broken Homebrew linkage after an ffmpeg major
+  upgrade, which previously surfaced only as a bare "Mirror failed (exited 1)").
+
+### Changed
+- Mirror and recording failures now capture and display the real scrcpy stderr
+  (e.g. `dyld: Library not loaded: .../libavformat.62.dylib`) instead of a
+  generic exit-code message.
+
 ## [2.0.0] - 2026-05-20
 
 ### Added
