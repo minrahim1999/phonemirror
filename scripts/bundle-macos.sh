@@ -6,7 +6,7 @@ cargo build --release
 
 APP_NAME="PhoneMirror"
 BINARY="phonemirror"
-VERSION="2.1.0"
+VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "phonemirror"))')"
 
 # Support LOCAL_BUILD=1 to build .app in project dir instead of /Applications
 if [ "${LOCAL_BUILD:-0}" = "1" ]; then

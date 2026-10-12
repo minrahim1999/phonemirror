@@ -4,3 +4,5 @@
 *~
 .DS_Store
 PhoneMirror_*.dmg
+/PhoneMirror.app/
+/graphify-out/

@@ -487,6 +487,26 @@ fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
 
 // ─── App Actions ──────────────────────────────────────────
 
+fn connected_serial(line: &str) -> Option<&str> {
+    let (serial, state) = line.trim().split_once('\t')?;
+    if !serial.is_empty() && state.split_whitespace().next() == Some("device") {
+        Some(serial)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::connected_serial;
+
+    #[test]
+    fn wireless_serial_preserves_spaces() {
+        let serial = "adb-RRCX107DMRP-ziYyJB (2)._adb-tls-connect._tcp";
+        assert_eq!(connected_serial(&format!("{serial}\tdevice")), Some(serial));
+    }
+}
+
 impl PhoneMirrorApp {
     fn refresh_device(&mut self) {
         let adb = adb_path();
@@ -506,9 +526,8 @@ impl PhoneMirrorApp {
             let mut usb_serial = String::new();
             let mut tcpip_serial = String::new();
             for line in stdout.lines().skip(1) {
-                let trimmed = line.trim();
-                if trimmed.contains("device") && !trimmed.contains("daemon") && !trimmed.is_empty() {
-                    let serial = trimmed.split_whitespace().next().unwrap_or("unknown").to_string();
+                if let Some(serial) = connected_serial(line) {
+                    let serial = serial.to_string();
                     connected = true;
                     if serial.contains("._adb-tls-connect._tcp") {
                         if tcpip_serial.is_empty() { tcpip_serial = serial.clone(); }
