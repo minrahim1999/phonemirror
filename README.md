@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: macOS · Windows · Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-green.svg)]()
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://rustup.rs)
-[![Version: 2.4.0](https://img.shields.io/badge/version-2.4.0-brightgreen.svg)](CHANGELOG.md)
+[![Version: 2.4.1](https://img.shields.io/badge/version-2.4.1-brightgreen.svg)](CHANGELOG.md)
 
 Screen mirroring · Screenshots · Recording — one click away.
 

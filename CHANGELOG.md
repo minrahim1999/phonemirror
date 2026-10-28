@@ -5,6 +5,12 @@ All notable changes to PhoneMirror will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-10-28
+
+### Fixed
+- Corrected the tool-discovery test that blocked Windows release builds by treating valid Scoop and WinGet paths under the user home directory as Android SDK paths.
+- Added coverage for all SDK roots while preserving Windows package-manager discovery assertions.
+
 ## [2.4.0] - 2026-10-28
 
 ### Added
