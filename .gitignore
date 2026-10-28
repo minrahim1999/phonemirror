@@ -1,4 +1,5 @@
 /target
+/dist/
 *.swp
 *.swo
 *~
@@ -6,3 +7,4 @@
 PhoneMirror_*.dmg
 /PhoneMirror.app/
 /graphify-out/
+/.dsh-verify/

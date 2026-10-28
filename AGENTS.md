@@ -1,0 +1,23 @@
+<!-- project-memory:start -->
+# PhoneMirror project context
+
+Native Rust/egui desktop dashboard wrapping external ADB and scrcpy (no web app). src/main.rs delegates startup to src/app/mod.rs; internals are grouped into android/, ui/, platform/. Assets: assets/macos/. Signing: packaging/macos/. See docs/ARCHITECTURE.md and docs/RELEASING.md.
+- src/app/mod.rs: dashboard, USB/wireless device selection, mirroring and capture, platform tool discovery/environment.
+- src/app/android/wireless.rs: Android 11+ TLS pairing, QR sessions, mDNS parsing, cancellable bounded ADB subprocesses and protocol tests.
+- src/app/ui/wireless_ui.rs: guided pairing-code / QR / Already paired workspace, actionable errors/copyable diagnostics and background worker lifecycle.
+- src/app/ui/desktop_ui.rs: dark simulator-style hub with compact searchable sidebar, full-height centered screen canvas, adaptive grouped top toolbar (capture, keyboard/device menu, zoom/fit, fullscreen/info) and separate Wi-Fi pairing page. Details/tools live in Info window, not canvas cards. mirror_ui zoom is fit-relative 50–300%, two-axis scrolling without drag-to-pan (device swipes preserved), keyboard forwarding toggle. Selection survives refresh/disconnect without redirecting actions. Offline/unauthorized/stopped targets cannot capture.
+- src/app/android/devices.rs: background-only ADB transport/SDK AVD inventory, exact running-AVD merge and emulator startup/reaping. SDK discovery uses ANDROID_HOME/ANDROID_SDK_ROOT, standard paths and PATH. Failed ADB discovery still lists installed AVDs. Startup survival is not boot proof.
+- src/app/android/mirror.rs + src/app/ui/mirror_ui.rs: embedded scrcpy 4.1 server/control client → FFmpeg H.264/PPM decoder → egui texture with focused touch/text/navigation. Requires matching scrcpy-server and host FFmpeg; no audio/IME/multitouch. Frame metadata config bit62 triggers decoder restart on rotation; stream metadata off. cleanup=false avoids upstream hardcoded server-path cleanup. Unique remote JAR/ADB forward and owned children only; no global scrcpy kills. Switching targets clears video/input. Normal stop is async; app Drop waits bounded cleanup. Remote JAR removal may fail on transport loss. Fixture/loopback/live synthetic decoder tests do not prove real device E2E.
+
+Checks: `cargo test --locked`; `cargo clippy --all-targets`; `cargo build --release --locked`.
+Clippy currently reports one pre-existing collapsible-if style warning in src/app/mod.rs. Format changed new modules with rustfmt; avoid whole-file unrelated reformatting.
+macOS bundle: `LOCAL_BUILD=1 ./scripts/bundle-macos.sh` stages dist/PhoneMirror.app; default invokes scripts/install-macos.sh to replace /Applications/PhoneMirror.app and retain PhoneMirror.previous.app. Script builds and ad-hoc signs. Verify signature and staged-to-installed bytes (signing changes the unsigned release executable).
+
+Wireless invariants: phone scans laptop QR (WIFI:T:ADB;S:<random-name>;P:<random-secret>;;). Match exact pairing service name/type. Pairing and connection ports differ; never assume 5555 or reuse pairing port. Secrets use stdin, not command arguments/logs. Pairing alone is not proof of an online transport. Manual pairing/Connect bypasses blocked mDNS. Do not exercise physical phones during automated testing; use fixtures or verified emulators.
+
+Existing architecture graph: query graphify-out/graph.json before broad investigation; run `graphify update .` after code changes. Disposable task scratch belongs under ignored .dsh-verify/<task-id>/ and must be cleaned safely.
+
+- src/app/platform/tools.rs: ADB/scrcpy/FFmpeg discovery. Order: custom path (tools.conf in app config dir) → PHONEMIRROR_ADB/_SCRCPY/_FFMPEG → ANDROID_HOME/ANDROID_SDK_ROOT/SDK (ADB only) → Homebrew/MacPorts/system → PATH. First candidate that runs its version command wins; differing ADB versions warn. Probing runs on the refresh thread; missing tools show a setup checklist; Info window has the Tools section. src/app/platform/app_menu.rs: macOS muda menu bar posting Actions applied with toolbar guards.
+
+Diagnostics distinguish ADB client version from active server-status path/version. ADB can expose a generic protocol fault while its server log records No route to host: this is a network-layer failure before code verification, not proof of an incorrect code. Do not reset trust keys/firewall/network settings without authorization. Bundle Bonjour/privacy declarations do not grant access to external ADB. See README troubleshooting/release-readiness section: ad-hoc signing and UI polish are not commercial release readiness.
+<!-- project-memory:end -->

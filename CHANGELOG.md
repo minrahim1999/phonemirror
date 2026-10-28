@@ -5,6 +5,22 @@ All notable changes to PhoneMirror will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-10-28
+
+### Added
+- Embedded screen canvas with focused keyboard/touch control and fit-relative zoom.
+- Android emulator inventory, guided wireless pairing and configurable tool discovery.
+- macOS native application menus and actionable connection diagnostics.
+
+### Changed
+- Organized application internals into Android, UI and platform modules with a minimal executable entry point.
+- Moved icons and entitlements into dedicated asset/packaging folders; generated bundles now stage under `dist/`.
+- Added verified macOS installation with a retained rollback copy.
+- Release builds use locked dependencies, test gates and tag/package version consistency checks.
+
+### Limitations
+- Ad-hoc signed macOS builds are not notarized. Device E2E and other platform builds require separate acceptance.
+
 ## [2.2.0] - 2026-08-24
 
 ### Added

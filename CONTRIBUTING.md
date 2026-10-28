@@ -14,9 +14,9 @@ Thank you for your interest in contributing! 🎉
 ## Development Setup
 
 ### Prerequisites
-- [Rust](https://rustup.rs/) (1.70+)
+- [Rust](https://rustup.rs/) (current stable)
 - [ADB](https://developer.android.com/tools/releases/platform-tools) — Android Debug Bridge
-- [scrcpy](https://github.com/Genymobile/scenecap) — Screen mirroring tool
+- [scrcpy](https://github.com/Genymobile/scrcpy) — Screen mirroring tool
 
 ### Build & Run
 ```bash
@@ -24,7 +24,7 @@ Thank you for your interest in contributing! 🎉
 cargo build
 
 # Release build (slow compile, fast runtime)
-cargo build --release
+cargo build --release --locked
 
 # Run
 cargo run --release
@@ -38,19 +38,30 @@ cargo build --release
 
 ## Project Structure
 
-```
-phonemirror-app/
+```text
+phonemirror/
 ├── src/
-│   └── main.rs          # All app logic (egui + ADB/scrcpy commands)
-├── scripts/
-│   └── bundle-macos.sh  # Creates .app bundle with code signing
-├── phonemirror.entitlements  # macOS entitlements for codesign
-├── Cargo.toml           # Rust dependencies
-├── LICENSE              # MIT
-├── CHANGELOG.md         # Version history
-├── CONTRIBUTING.md      # This file
-└── README.md            # Project documentation
+│   ├── main.rs                # Minimal executable entry point
+│   └── app/
+│       ├── mod.rs             # Application state and lifecycle
+│       ├── android/           # Device inventory, wireless pairing, mirror protocol
+│       ├── ui/                # Dashboard, pairing and screen/input presentation
+│       └── platform/          # Host tool discovery and native menus
+├── assets/macos/              # App icon
+├── packaging/macos/           # Signing entitlements
+├── scripts/                   # Bundle, guarded install, icon generation
+├── docs/                      # Architecture and release procedure
+├── .github/workflows/         # Tested, version-checked release builds
+├── Cargo.toml                 # Package metadata and dependencies
+├── Cargo.lock                 # Locked dependency resolution
+└── dist/                      # Generated signed bundle (ignored)
 ```
+
+## Verification and releases
+
+Run `cargo test --locked`, `cargo clippy --locked --all-targets`, and
+`cargo build --release --locked`. Tests live beside their modules.
+See [release procedure](docs/RELEASING.md) before installing or tagging.
 
 ## Code Style
 

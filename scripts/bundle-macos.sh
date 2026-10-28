@@ -1,30 +1,37 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+if [ "$(uname -s)" != Darwin ]; then
+    echo "macOS is required to create this bundle." >&2
+    exit 1
+fi
 
 echo "🏗️  Building PhoneMirror..."
-cargo build --release
+cargo build --release --locked
 
 APP_NAME="PhoneMirror"
 BINARY="phonemirror"
-VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "phonemirror"))')"
+VERSION="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "phonemirror"))')"
 
-# Support LOCAL_BUILD=1 to build .app in project dir instead of /Applications
-if [ "${LOCAL_BUILD:-0}" = "1" ]; then
-    BUNDLE="$(pwd)/${APP_NAME}.app"
-else
-    BUNDLE="/Applications/${APP_NAME}.app"
+# Always stage and verify before touching the installed application.
+mkdir -p "$ROOT/dist"
+if [ -L "$ROOT/dist" ]; then
+    echo "Refusing symlinked dist directory" >&2; exit 1
 fi
-
-echo "📦 Creating .app bundle at $BUNDLE..."
-rm -rf "$BUNDLE"
+STAGING="$(mktemp -d "$ROOT/dist/.bundle.XXXXXX")"
+trap 'rm -rf "${STAGING:?}"' EXIT
+BUNDLE="$STAGING/$APP_NAME.app"
+echo "Creating staged bundle..."
 mkdir -p "$BUNDLE/Contents/MacOS"
 mkdir -p "$BUNDLE/Contents/Resources"
 
 cp "target/release/$BINARY" "$BUNDLE/Contents/MacOS/$BINARY"
 
 # Copy app icon into Resources (generate first with: python3 scripts/generate-icon.py)
-if [ -f "AppIcon.icns" ]; then
-    cp AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
+if [ -f "assets/macos/AppIcon.icns" ]; then
+    cp assets/macos/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
     echo "🎨 App icon included"
 else
     echo "⚠️  No AppIcon.icns found — run: python3 scripts/generate-icon.py"
@@ -55,6 +62,13 @@ cat > "$BUNDLE/Contents/Info.plist" << PLIST
     <string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.13</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>PhoneMirror discovers and connects to your Android device over your local Wi-Fi network for screen mirroring.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_adb-tls-pairing._tcp</string>
+        <string>_adb-tls-connect._tcp</string>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
@@ -66,18 +80,24 @@ cat > "$BUNDLE/Contents/Info.plist" << PLIST
 PLIST
 
 # Sign with entitlements for network and JIT access
-if [ -f "phonemirror.entitlements" ]; then
+if [ -f "packaging/macos/phonemirror.entitlements" ]; then
     echo "🔐 Signing with entitlements..."
-    codesign --force --deep --sign - --entitlements phonemirror.entitlements "$BUNDLE"
+    codesign --force --deep --sign - --entitlements packaging/macos/phonemirror.entitlements "$BUNDLE"
 else
     echo "🔐 Signing ad-hoc..."
     codesign --force --deep --sign - "$BUNDLE"
 fi
 
-echo "✅ Bundle created at $BUNDLE"
-echo "   Binary: $(du -h "$BUNDLE/Contents/MacOS/$BINARY" | cut -f1)"
+
+plutil -lint "$BUNDLE/Contents/Info.plist"
+codesign --verify --deep --strict "$BUNDLE"
+
+DEST="$ROOT/dist/$APP_NAME.app"
+if [ -L "$DEST" ]; then echo "Refusing symlink: $DEST" >&2; exit 1; fi
+rm -rf "$DEST"
+mv "$BUNDLE" "$DEST"
+echo "Bundle verified: $DEST ($VERSION)"
 
 if [ "${LOCAL_BUILD:-0}" != "1" ]; then
-    echo ""
-    echo "Run: open $BUNDLE"
+    "$ROOT/scripts/install-macos.sh"
 fi

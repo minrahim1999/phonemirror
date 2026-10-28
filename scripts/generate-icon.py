@@ -121,7 +121,7 @@ def main():
     # Create iconset directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
-    iconset_dir = os.path.join(project_dir, 'PhoneMirror.iconset')
+    iconset_dir = tempfile.mkdtemp(suffix='.iconset')
     os.makedirs(iconset_dir, exist_ok=True)
 
     for sz, filenames in iconset_sizes.items():
@@ -134,7 +134,7 @@ def main():
             print(f"  Wrote {fname}")
 
     # Convert to .icns
-    output_path = os.path.join(project_dir, 'AppIcon.icns')
+    output_path = os.path.join(project_dir, 'assets', 'macos', 'AppIcon.icns')
     make_icns(iconset_dir, output_path)
 
     # Clean up iconset
