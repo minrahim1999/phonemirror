@@ -528,11 +528,33 @@ mod tests {
 
     #[test]
     fn only_adb_searches_the_android_sdk() {
-        let env = [("ANDROID_HOME", "/sdk"), ("HOME", "/Users/me")];
+        let env = [
+            ("ANDROID_HOME", "/sdk"),
+            ("ANDROID_SDK_ROOT", "/sdk-root"),
+            ("HOME", "/Users/me"),
+            ("LOCALAPPDATA", "/local"),
+        ];
+        let sdk_paths: Vec<_> = candidates(Tool::Adb, None, &vars(&env))
+            .into_iter()
+            .filter(|c| matches!(c.source, "ANDROID_HOME" | "ANDROID_SDK_ROOT" | "the Android SDK"))
+            .map(|c| c.path.parent().unwrap().to_path_buf())
+            .collect();
+        assert_eq!(sdk_paths.len(), 5, "all explicit and default SDK roots are covered");
         for tool in [Tool::Scrcpy, Tool::Ffmpeg] {
-            assert!(candidates(tool, None, &vars(&env))
-                .iter()
-                .all(|c| !c.path.starts_with("/sdk") && !c.path.starts_with("/Users/me")));
+            let list = candidates(tool, None, &vars(&env));
+            assert!(list.iter().all(|c| {
+                !matches!(c.source, "ANDROID_HOME" | "ANDROID_SDK_ROOT" | "the Android SDK")
+                    && sdk_paths.iter().all(|sdk| !c.path.starts_with(sdk))
+            }), "{tool:?} must not search SDK platform-tools: {list:?}");
+            // Home-directory package managers are valid tool sources on Windows.
+            #[cfg(windows)]
+            for (relative, source) in [
+                ("scoop/shims", "Scoop"),
+                ("AppData/Local/Microsoft/WinGet/Links", "WinGet"),
+            ] {
+                let expected = Path::new("/Users/me").join(relative).join(tool.binary());
+                assert!(list.iter().any(|c| c.path == expected && c.source == source));
+            }
         }
     }
 
