@@ -34,6 +34,9 @@ impl MirrorUi {
             .as_ref()
             .is_some_and(|s| matches!(s.status(), Status::Starting | Status::Streaming))
     }
+    pub fn diagnostic(&self) -> String {
+        self.session.as_ref().map(|session| format!("{}: {:?}", session.serial(), session.status())).unwrap_or_else(|| "No session".into())
+    }
     pub fn has_session(&self) -> bool {
         self.session.is_some()
     }
@@ -124,6 +127,17 @@ impl MirrorUi {
             .as_ref()
             .is_some_and(|s| s.status() == Status::Streaming)
             && self.texture.is_some()
+    }
+    /// Wake must not depend on a decoded texture: a sleeping display may have none yet.
+    pub fn can_wake(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|s| s.status() == Status::Streaming)
+    }
+    pub fn wake_screen(&self) {
+        if self.can_wake() {
+            self.key(224); // Android KEYCODE_WAKEUP, never toggles an already-awake screen off.
+        }
     }
     pub fn navigation_key(&self, code: u32) {
         if self.streaming() {
@@ -421,6 +435,43 @@ mod tests {
         assert_eq!(u16::from_be_bytes(packet[18..20].try_into().unwrap()), 200);
         assert_eq!(u16::from_be_bytes(packet[20..22].try_into().unwrap()), 100);
         assert_eq!(u32::from_be_bytes(packet[14..18].try_into().unwrap()), 99);
+    }
+
+    #[test]
+    fn wake_screen_sends_wakeup_without_a_frame_or_keyboard_focus() {
+        let (session, rx) = Session::fixture_with_input("phone", Status::Streaming, None);
+        let mut mirror = MirrorUi {
+            session: Some(session),
+            keyboard_disabled: true,
+            ..Default::default()
+        };
+        assert!(!mirror.streaming());
+        assert!(mirror.can_wake());
+        mirror.wake_screen();
+        for action in [0, 1] {
+            assert_eq!(
+                rx.try_recv().unwrap(),
+                vec![0, action, 0, 0, 0, 224, 0, 0, 0, 0, 0, 0, 0, 0]
+            );
+        }
+        mirror.reconcile_target("other-phone");
+        assert!(!mirror.can_wake());
+        mirror.wake_screen();
+        assert!(rx.try_recv().is_err());
+        for status in [
+            Status::Starting,
+            Status::Stopped,
+            Status::Failed("offline".into()),
+        ] {
+            let (session, rx) = Session::fixture_with_input("phone", status, None);
+            let mirror = MirrorUi {
+                session: Some(session),
+                ..Default::default()
+            };
+            assert!(!mirror.can_wake());
+            mirror.wake_screen();
+            assert!(rx.try_recv().is_err());
+        }
     }
 
     #[test]

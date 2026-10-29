@@ -254,6 +254,39 @@ fn pairing_network_reason(recent: &str, address: &str) -> Option<&'static str> {
         })
 }
 
+/// Disconnect exactly one wireless transport, preserving pairing and other connections.
+pub fn disconnect(adb: &mut impl Adb, serial: &str) -> Result<String, String> {
+    let mdns = serial
+        .strip_suffix("._adb-tls-connect._tcp")
+        .or_else(|| serial.strip_suffix("._adb-tls-connect._tcp."));
+    if endpoint(serial).is_err()
+        && !mdns.is_some_and(|name| name.starts_with("adb-") && name.len() > 4)
+    {
+        return Err("Select a wireless IP address or ADB connection service to disconnect.".into());
+    }
+    if serial.contains(['\n', '\r', '\0']) {
+        return Err("Invalid wireless connection ID.".into());
+    }
+    let reply = adb.run(&["disconnect", serial], None)?;
+    if !reply
+        .lines()
+        .any(|line| line.trim() == format!("disconnected {serial}"))
+    {
+        return Err(format!("ADB did not confirm disconnection: {reply}"));
+    }
+    Ok(format!("Disconnected {serial}. Pairing is preserved. ADB discovery may reconnect this service automatically."))
+}
+
+/// Discover connection endpoints only; never pair or connect an arbitrary phone.
+pub fn discover_connections(adb: &mut impl Adb) -> Result<Vec<Service>, String> {
+    let text = adb.run(&["mdns", "services"], None)?;
+    let mut found = services(&text);
+    found.retain(|service| service.kind == "_adb-tls-connect._tcp");
+    found.sort_by(|a, b| a.endpoint.cmp(&b.endpoint).then(a.name.cmp(&b.name)));
+    found.dedup_by(|a, b| a.endpoint == b.endpoint);
+    Ok(found)
+}
+
 pub fn connect(adb: &mut impl Adb, address: &str) -> Result<String, String> {
     let address = endpoint(address)?;
     let text = adb.run(&["connect", &address], None)?;
@@ -269,7 +302,7 @@ pub fn connect(adb: &mut impl Adb, address: &str) -> Result<String, String> {
     if state.trim() != "device" {
         return Err(format!("ADB connected but device is not ready: {state}"));
     }
-    Ok("Wireless device connected. You can now start mirroring.".into())
+    Ok(format!("Wireless device connected at {address}. You can now start mirroring. In VS Code, reload the window and select the IP-address device if the service-name device appears unsupported."))
 }
 
 pub fn pair(adb: &mut impl Adb, address: &str, password: &str) -> Result<String, String> {
@@ -376,6 +409,58 @@ mod tests {
             calls: vec![],
         }
     }
+    #[test]
+    fn discovery_lists_only_unique_connection_endpoints_without_connecting() {
+        let mut adb = fake(vec![("mdns services", "phone (2)\t_adb-tls-connect._tcp.\t192.168.1.192:36801\nphone\t_adb-tls-connect._tcp\t192.168.1.192:36801\npair\t_adb-tls-pairing._tcp\t192.168.1.192:40000\nother\t_adb-tls-connect._tcp\t[::1]:1234")]);
+        let found = discover_connections(&mut adb).unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().any(|s| s.endpoint == "192.168.1.192:36801"));
+        assert!(found.iter().all(|s| s.kind == "_adb-tls-connect._tcp"));
+        assert_eq!(adb.calls, ["mdns services"]);
+    }
+
+    #[test]
+    fn disconnect_preserves_exact_spaced_id_and_never_disconnects_all() {
+        let serial = "adb-phone (2)._adb-tls-connect._tcp";
+        let mut adb = fake(vec![(
+            "disconnect adb-phone (2)._adb-tls-connect._tcp",
+            "disconnected adb-phone (2)._adb-tls-connect._tcp",
+        )]);
+        assert!(disconnect(&mut adb, serial)
+            .unwrap()
+            .contains("Pairing is preserved"));
+        assert_eq!(adb.calls.len(), 1);
+        for invalid in [
+            "",
+            "usb-serial",
+            "192.168.1.20",
+            "adb-bad\n._adb-tls-connect._tcp",
+        ] {
+            assert!(disconnect(&mut adb, invalid).is_err());
+        }
+        assert_eq!(adb.calls.len(), 1);
+    }
+
+    #[test]
+    fn disconnect_ip_and_reject_unconfirmed_reply() {
+        let mut adb = fake(vec![(
+            "disconnect 192.168.1.20:1234",
+            "error: no such device",
+        )]);
+        assert!(disconnect(&mut adb, "192.168.1.20:1234").is_err());
+        let mut adb = fake(vec![(
+            "disconnect 192.168.1.20:1234",
+            "disconnected 192.168.1.20:1234",
+        )]);
+        assert!(disconnect(&mut adb, "192.168.1.20:1234").is_ok());
+    }
+
+    #[test]
+    fn discovery_empty_is_not_a_connection_success() {
+        let mut adb = fake(vec![("mdns services", "List of discovered mdns services")]);
+        assert!(discover_connections(&mut adb).unwrap().is_empty());
+    }
+
     #[test]
     fn pairing_failure_containing_success_words_is_rejected() {
         // This exact failure is emitted by AOSP adb_wifi_pair_device.

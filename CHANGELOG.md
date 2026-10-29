@@ -5,6 +5,23 @@ All notable changes to PhoneMirror will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-10-29
+
+### Added
+- Split workspace for up to four independent device mirrors, with per-pane selection, controls and cleanup.
+- Expandable Tools drawer with explicit-target Logcat snapshots, search, severity filters, pause/resume and copy.
+- Copyable diagnostics covering tool paths/versions, connection health and mirror session errors.
+- Wake screen action and session-scoped keep-active support without persistent Android setting changes.
+- Wireless connection discovery with explicit endpoint selection and targeted disconnect that preserves pairing.
+
+### Changed
+- Compact mirroring toolbar; secondary actions live in the Device menu.
+- Launcher icon in the sidebar and Refresh/Wi-Fi pairing in the macOS Settings menu.
+
+### Limitations
+- Logcat is read-only and bounded to the latest 500 lines / 256 KiB per snapshot; interactive terminals are not included.
+- Automated fixtures do not establish live-device or multi-device E2E acceptance. macOS builds remain ad-hoc signed, not notarized.
+
 ## [2.4.1] - 2026-10-28
 
 ### Fixed

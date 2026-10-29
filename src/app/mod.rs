@@ -8,7 +8,7 @@ use android::{devices, mirror, wireless};
 use platform::tools;
 #[cfg(target_os = "macos")]
 use platform::app_menu;
-use ui::{desktop_ui, mirror_ui, wireless_ui};
+use ui::{desktop_ui, mirror_ui, split_ui, wireless_ui};
 
 pub(crate) fn run() -> eframe::Result {
     let icon = load_icon();
@@ -111,6 +111,8 @@ struct PhoneMirrorApp {
     wireless: wireless_ui::WirelessUi,
     refresh_job: Option<std::sync::mpsc::Receiver<(DeviceStatus, devices::Inventory)>>,
     embedded: mirror_ui::MirrorUi,
+    split: split_ui::SplitUi,
+    drawer: ui::tools_ui::ToolsDrawer,
     recording_child: Option<std::process::Child>,
     recording_cleanup: Vec<std::thread::JoinHandle<()>>,
     recording_log: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -166,6 +168,8 @@ impl Default for PhoneMirrorApp {
             wireless: wireless_ui::WirelessUi::default(),
             refresh_job: None,
             embedded: mirror_ui::MirrorUi::default(),
+            split: split_ui::SplitUi::default(),
+            drawer: ui::tools_ui::ToolsDrawer::default(),
             recording_child: None,
             recording_cleanup: Vec::new(),
             recording_log: Default::default(),
@@ -191,7 +195,9 @@ impl eframe::App for PhoneMirrorApp {
         self.poll_emulator_launch();
         self.poll_browse();
         self.embedded.poll(ctx);
-        self.mirror_running = self.embedded.active();
+        self.split.reconcile_primary(&self.device_status.device_serial);
+        self.split.poll(ctx, self.page == desktop_ui::Page::Devices);
+        self.mirror_running = self.embedded.active() || self.split.active();
         if self.page != desktop_ui::Page::Devices { self.embedded.release_touch(); }
         if let Some(child) = self.recording_child.as_mut() {
             if let Ok(Some(status)) = child.try_wait() {
@@ -284,7 +290,7 @@ impl PhoneMirrorApp {
                 Action::Record if ready => self.start_recording(),
                 Action::Mirror if self.embedded.active() => {
                     self.embedded.stop();
-                    self.mirror_running = false;
+                    self.mirror_running = self.split.active();
                 }
                 Action::Mirror if ready => {
                     self.page = desktop_ui::Page::Devices;
@@ -333,7 +339,8 @@ impl PhoneMirrorApp {
             .and_then(|d| d.serial.clone()).unwrap_or_default();
         self.device_status.device_id = selected.map(|d| d.name.clone()).unwrap_or_default();
         self.embedded.reconcile_target(&self.device_status.device_serial);
-        self.mirror_running = self.embedded.active();
+        self.split.reconcile_primary(&self.device_status.device_serial);
+        self.mirror_running = self.embedded.active() || self.split.active();
     }
 
     fn poll_refresh(&mut self) {
@@ -357,7 +364,7 @@ impl PhoneMirrorApp {
                 self.device_status.connected = false;
                 self.device_status.device_serial.clear();
                 self.embedded.stop();
-                self.mirror_running = false;
+                self.mirror_running = self.split.active();
             }
             None => {}
         }
@@ -469,6 +476,11 @@ impl PhoneMirrorApp {
 
     fn start_mirror(&mut self, ctx: &egui::Context) {
         if !self.device_status.connected || self.device_status.device_serial.is_empty() { return; }
+        if self.split.contains_serial(&self.device_status.device_serial) {
+            self.status_message = "This device is already mirrored in another pane. Stop that session first.".into();
+            self.status_is_error = true;
+            return;
+        }
         self.embedded.start(mirror::Config {
             serial: self.device_status.device_serial.clone(), adb_path: adb_path(),
             scrcpy_path: scrcpy_path(), env: build_full_env(),
@@ -480,6 +492,7 @@ impl PhoneMirrorApp {
 
     fn close_mirror(&mut self) {
         self.embedded.stop();
+        self.split.stop();
         self.mirror_running = false;
         if self.is_recording { self.stop_recording(); }
         self.status_message = "PhoneMirror sessions stopped. Other applications were not affected.".into();
@@ -795,7 +808,10 @@ fn build_full_env() -> Vec<(String, String)> {
 
 impl Drop for PhoneMirrorApp {
     fn drop(&mut self) {
+        self.embedded.stop();
+        self.split.stop();
         self.embedded.shutdown_on_exit();
+        self.split.shutdown_on_exit();
         if self.recording_child.is_some() { self.stop_recording(); }
         for cleanup in self.recording_cleanup.drain(..) { let _ = cleanup.join(); }
     }

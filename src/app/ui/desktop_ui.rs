@@ -156,14 +156,8 @@ enum Icon {
     Wifi,
     Play,
     Stop,
-    Keyboard,
-    ZoomOut,
-    ZoomIn,
     Expand,
-    Info,
-    Refresh,
     Camera,
-    Record,
 }
 fn paint_icon(p: &egui::Painter, rect: egui::Rect, icon: Icon, color: egui::Color32) {
     let c = rect.center();
@@ -208,61 +202,12 @@ fn paint_icon(p: &egui::Painter, rect: egui::Rect, icon: Icon, color: egui::Colo
                 color,
             );
         }
-        Icon::Keyboard => {
-            p.rect_stroke(
-                egui::Rect::from_center_size(c, egui::vec2(22.0, 14.0)),
-                3.0,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            for y in [-3.0, 1.0] {
-                for x in [-7.0, -2.5, 2.5, 7.0] {
-                    p.circle_filled(c + egui::vec2(x, y), 0.8, color);
-                }
-            }
-            p.line_segment(
-                [c + egui::vec2(-5.0, 4.0), c + egui::vec2(5.0, 4.0)],
-                stroke,
-            );
-        }
-        Icon::ZoomIn | Icon::ZoomOut => {
-            p.circle_stroke(c - egui::vec2(2.0, 2.0), 6.0, stroke);
-            p.line_segment([c + egui::vec2(3.0, 3.0), c + egui::vec2(9.0, 9.0)], stroke);
-            p.line_segment(
-                [c + egui::vec2(-5.0, -2.0), c + egui::vec2(1.0, -2.0)],
-                stroke,
-            );
-            if matches!(icon, Icon::ZoomIn) {
-                p.line_segment(
-                    [c + egui::vec2(-2.0, -5.0), c + egui::vec2(-2.0, 1.0)],
-                    stroke,
-                );
-            }
-        }
         Icon::Expand => {
             for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
                 let corner = c + egui::vec2(8.0 * x, 8.0 * y);
                 p.line_segment([corner, corner - egui::vec2(5.0 * x, 0.0)], stroke);
                 p.line_segment([corner, corner - egui::vec2(0.0, 5.0 * y)], stroke);
             }
-        }
-        Icon::Info => {
-            p.circle_stroke(c, 9.0, stroke);
-            p.circle_filled(c - egui::vec2(0.0, 4.0), 1.0, color);
-            p.line_segment([c, c + egui::vec2(0.0, 5.0)], stroke);
-        }
-        Icon::Refresh => {
-            let points: Vec<_> = (0..24)
-                .map(|i| {
-                    let a = i as f32 / 23.0 * 5.0;
-                    c + egui::vec2(a.cos(), a.sin()) * 7.0
-                })
-                .collect();
-            p.add(egui::Shape::line(points, stroke));
-            p.line_segment(
-                [c + egui::vec2(7.0, -5.0), c + egui::vec2(7.0, 1.0)],
-                stroke,
-            );
         }
         Icon::Camera => {
             p.rect_stroke(
@@ -276,10 +221,6 @@ fn paint_icon(p: &egui::Painter, rect: egui::Rect, icon: Icon, color: egui::Colo
                 [c + egui::vec2(-4.0, -9.0), c + egui::vec2(4.0, -9.0)],
                 stroke,
             );
-        }
-        Icon::Record => {
-            p.circle_stroke(c, 10.0, stroke);
-            p.circle_filled(c, 4.0, color);
         }
     }
 }
@@ -380,7 +321,7 @@ fn tool(
     let background = ui.painter().add(egui::Shape::Noop);
     let button = egui::Button::new(if icon.is_some() { "" } else { label })
         .frame(false)
-        .min_size(egui::vec2(if icon.is_some() { 34.0 } else { 46.0 }, 32.0));
+        .min_size(egui::vec2(if icon.is_some() { 28.0 } else { 34.0 }, 26.0));
     let response = ui.add_enabled(enabled, button);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
@@ -431,8 +372,8 @@ fn tool_group(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(CARD_BG)
         .stroke(egui::Stroke::new(1.0, BORDER.gamma_multiply(0.7)))
-        .corner_radius(10)
-        .inner_margin(3)
+        .corner_radius(7)
+        .inner_margin(2)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
@@ -477,10 +418,10 @@ impl PhoneMirrorApp {
             .frame(
                 egui::Frame::new()
                     .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(16, 10)),
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
             )
             .show(ctx, |ui| {
-                if self.page == Page::Devices && ui.available_width() >= 740.0 {
+                if self.page == Page::Devices && ui.available_width() >= 580.0 {
                     ui.horizontal_top(|ui| {
                         ui.allocate_ui_with_layout(
                             egui::vec2(170.0, 36.0),
@@ -506,6 +447,10 @@ impl PhoneMirrorApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    if ui.small_button(if self.drawer.open { "Hide tools" } else { "Tools" }).clicked() {
+                        self.drawer.open = !self.drawer.open;
+                        self.embedded.release_touch();
+                    }
                     if !self.status_message.is_empty() {
                         ui.add(
                             egui::Label::new(
@@ -538,6 +483,7 @@ impl PhoneMirrorApp {
                     }
                 });
             });
+        self.show_tools_drawer(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(12))
             .show(ctx, |ui| {
@@ -567,11 +513,22 @@ impl PhoneMirrorApp {
                         .devices
                         .iter()
                         .find(|d| Some(&d.id) == self.selected_device.as_ref())
+                        .cloned()
                     {
                         detail(ui, "Name", &device.name);
                         detail(ui, "Connection", kind_label(device.kind));
                         if let Some(serial) = &device.serial {
                             detail(ui, "Serial", serial);
+                            if device.kind == Kind::Wifi {
+                                muted(ui, "Disconnect only this connection. Pairing and other connections stay intact; ADB may rediscover it.");
+                                if ui.add_enabled(!self.wireless.busy() && !self.embedded.active() && !self.is_recording, egui::Button::new("Disconnect this wireless connection")).clicked() {
+                                    self.wireless.disconnect(ui.ctx(), serial.clone());
+                                    self.page = Page::Wifi;
+                                }
+                                if self.embedded.active() || self.is_recording {
+                                    muted(ui, "Stop PhoneMirror sessions before disconnecting.");
+                                }
+                            }
                         }
                         if let Some(avd) = &device.avd {
                             detail(ui, "Virtual device", avd);
@@ -633,161 +590,99 @@ impl PhoneMirrorApp {
     fn device_toolbar(&mut self, ui: &mut egui::Ui) {
         let ready = self.device_status.connected && self.device_status.scrcpy_health.is_empty();
         let streaming = self.embedded.streaming();
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+        ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
+        ui.spacing_mut().button_padding = egui::vec2(7.0, 4.0);
+        ui.spacing_mut().interact_size.y = 26.0;
         ui.horizontal_wrapped(|ui| {
             tool_group(ui, |ui| {
-                if tool(
-                    ui,
-                    if self.embedded.active() {
-                        "Stop mirroring"
-                    } else {
-                        "Start mirroring here"
-                    },
-                    Some(if self.embedded.active() {
-                        Icon::Stop
-                    } else {
-                        Icon::Play
-                    }),
-                    ready || self.embedded.active(),
-                    self.embedded.active(),
-                )
-                .clicked()
-                {
-                    if self.embedded.active() {
-                        self.embedded.stop();
-                        self.mirror_running = false;
-                    } else {
-                        self.start_mirror(ui.ctx());
-                    }
+                if tool(ui, if self.embedded.active() { "Stop mirroring" } else { "Start mirroring here" },
+                    Some(if self.embedded.active() { Icon::Stop } else { Icon::Play }),
+                    ready || self.embedded.active(), self.embedded.active()).clicked() {
+                    if self.embedded.active() { self.embedded.stop(); } else { self.start_mirror(ui.ctx()); }
                 }
-                if tool(
-                    ui,
-                    "Save screenshot",
-                    Some(Icon::Camera),
-                    self.device_status.connected,
-                    false,
-                )
-                .clicked()
-                {
+                if tool(ui, "Save screenshot", Some(Icon::Camera), self.device_status.connected, false).clicked() {
                     self.take_screenshot();
                 }
-                if tool(
-                    ui,
-                    if self.is_recording {
-                        "Stop recording"
-                    } else {
-                        "Record screen"
-                    },
-                    Some(Icon::Record),
-                    ready || self.is_recording,
-                    self.is_recording,
-                )
-                .clicked()
-                {
-                    if self.is_recording {
-                        self.stop_recording();
-                    } else {
-                        self.start_recording();
-                    }
-                }
             });
-            tool_group(ui, |ui| {
-                if tool(
-                    ui,
-                    "Forward keyboard input",
-                    Some(Icon::Keyboard),
-                    streaming,
-                    self.embedded.keyboard_enabled(),
-                )
-                .clicked()
-                {
+            ui.menu_button(if self.is_recording { "Device •" } else { "Device" }, |ui| {
+                if ui.add_enabled(ready || self.is_recording, egui::Button::new(if self.is_recording { "Stop recording" } else { "Record screen" })).clicked() {
+                    if self.is_recording { self.stop_recording(); } else { self.start_recording(); }
+                    ui.close_menu();
+                }
+                if ui.add_enabled(streaming, egui::Button::new("Forward keyboard input").selected(self.embedded.keyboard_enabled())).clicked() {
                     self.embedded.toggle_keyboard();
+                    ui.close_menu();
                 }
-                ui.menu_button("Device", |ui| {
-                    ui.add_enabled_ui(streaming, |ui| {
-                        for (label, code) in [
-                            ("Back", 4),
-                            ("Home", 3),
-                            ("Recent apps", 187),
-                            ("Power", 26),
-                            ("Volume down", 25),
-                            ("Volume up", 24),
-                        ] {
-                            if ui.button(label).clicked() {
-                                self.embedded.navigation_key(code);
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                    ui.separator();
-                    if ui.button("Pair a Wi-Fi device").clicked() {
-                        self.embedded.release_touch();
-                        self.page = Page::Wifi;
-                        ui.close_menu();
+                if ui.add_enabled(self.embedded.can_wake(), egui::Button::new("Wake screen")).clicked() {
+                    self.embedded.wake_screen();
+                    ui.close_menu();
+                }
+                ui.add_enabled_ui(streaming, |ui| {
+                    for (label, code) in [("Back", 4), ("Home", 3), ("Recent apps", 187), ("Power", 26), ("Volume down", 25), ("Volume up", 24)] {
+                        if ui.button(label).clicked() { self.embedded.navigation_key(code); ui.close_menu(); }
                     }
+                    ui.separator();
+                    if ui.button("Zoom in").clicked() { self.embedded.zoom_by(1.25); ui.close_menu(); }
+                    if ui.button("Zoom out").clicked() { self.embedded.zoom_by(0.8); ui.close_menu(); }
                 });
-            });
-            tool_group(ui, |ui| {
-                if tool(ui, "Zoom out", Some(Icon::ZoomOut), streaming, false).clicked() {
-                    self.embedded.zoom_by(0.8);
+                ui.separator();
+                if ui.button("Device information & tools").clicked() {
+                    self.show_device_info = !self.show_device_info;
+                    ui.close_menu();
                 }
-                if tool(ui, &self.embedded.zoom_label(), None, streaming, false)
-                    .on_hover_text("Fit screen to available space")
-                    .clicked()
-                {
-                    self.embedded.fit();
-                }
-                if tool(ui, "Zoom in", Some(Icon::ZoomIn), streaming, false).clicked() {
-                    self.embedded.zoom_by(1.25);
+                if ui.button("Pair a Wi-Fi device").clicked() {
+                    self.embedded.release_touch(); self.page = Page::Wifi; ui.close_menu();
                 }
             });
             tool_group(ui, |ui| {
+                if tool(ui, "Fit", None, streaming, false).on_hover_text("Fit screen to pane").clicked() { self.embedded.fit(); }
                 if tool(ui, "Toggle fullscreen", Some(Icon::Expand), true, false).clicked() {
                     let full = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
                 }
-                if tool(
-                    ui,
-                    "Device information & tools",
-                    Some(Icon::Info),
-                    true,
-                    self.show_device_info,
-                )
-                .clicked()
-                {
-                    self.show_device_info = !self.show_device_info;
+            });
+            ui.menu_button(if self.split.count() == 0 { "Split" } else { "Split •" }, |ui| {
+                for (extra, label) in [(0, "Single device"), (1, "2 devices"), (2, "3 devices"), (3, "4 devices")] {
+                    if ui.selectable_label(self.split.count() == extra, label).clicked() {
+                        self.embedded.release_touch();
+                        self.split.set_count(extra);
+                        ui.close_menu();
+                    }
                 }
+                ui.label(egui::RichText::new("Reducing panes stops their sessions.").small().color(TEXT_DIM));
             });
         });
     }
 
     fn device_library(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            let id = egui::Id::new("launcher_icon");
+            let texture = ui.ctx().data_mut(|data| data.get_temp::<egui::TextureHandle>(id))
+                .unwrap_or_else(|| {
+                    let icon = crate::app::load_icon();
+                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                        [icon.width as usize, icon.height as usize],
+                        &icon.rgba,
+                    );
+                    let texture = ui.ctx().load_texture(
+                        "PhoneMirror launcher", image, egui::TextureOptions::LINEAR,
+                    );
+                    ui.ctx().data_mut(|data| data.insert_temp(id, texture.clone()));
+                    texture
+                });
+            ui.add(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(28.0, 28.0)))
+                .on_hover_text("PhoneMirror");
             ui.label(egui::RichText::new("PhoneMirror").size(13.0).strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if tool(
-                    ui,
-                    "Pair a Wi-Fi device",
-                    Some(Icon::Wifi),
-                    true,
-                    self.page == Page::Wifi,
-                )
-                .clicked()
-                {
+            #[cfg(not(target_os = "macos"))]
+            ui.menu_button("Settings", |ui| {
+                if ui.add_enabled(self.refresh_job.is_none(), egui::Button::new("Refresh devices")).clicked() {
+                    self.rescan_tools();
+                    ui.close_menu();
+                }
+                if ui.button("Pair a Wi-Fi device…").clicked() {
                     self.embedded.release_touch();
                     self.page = Page::Wifi;
-                }
-                if tool(
-                    ui,
-                    "Refresh devices",
-                    Some(Icon::Refresh),
-                    self.refresh_job.is_none(),
-                    false,
-                )
-                .clicked()
-                {
-                    self.rescan_tools();
+                    ui.close_menu();
                 }
             });
         });
@@ -876,6 +771,27 @@ impl PhoneMirrorApp {
     }
 
     fn device_canvas(&mut self, ui: &mut egui::Ui) {
+        if self.split.count() == 0 {
+            self.single_device_canvas(ui);
+            return;
+        }
+        let size = ui.available_size();
+        let gap = 8.0;
+        ui.spacing_mut().item_spacing.x = gap;
+        let pane_width = ((size.x - gap) / 2.0).max(1.0);
+        let ready = self.device_status.tools.as_ref().is_some_and(|report| !report.missing())
+            && self.device_status.scrcpy_health.is_empty();
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(egui::vec2(pane_width, size.y), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.push_id("primary_mirror_pane", |ui| self.single_device_canvas(ui));
+            });
+            ui.allocate_ui_with_layout(egui::vec2(pane_width, size.y), egui::Layout::top_down(egui::Align::Min), |ui| {
+                self.split.show(ui, &self.inventory, &self.device_status.device_serial, ready);
+            });
+        });
+    }
+
+    fn single_device_canvas(&mut self, ui: &mut egui::Ui) {
         if self.embedded.has_session() {
             self.embedded.show(ui);
             return;
@@ -941,7 +857,7 @@ impl PhoneMirrorApp {
                                     .fill(ACCENT)
                                     .stroke(egui::Stroke::NONE)
                                     .corner_radius(10)
-                                    .min_size(egui::vec2(200.0, 40.0)),
+                                    .min_size(egui::vec2(ui.available_width().min(200.0), 36.0)),
                                 )
                                 .clicked()
                             {
@@ -1285,6 +1201,64 @@ mod tests {
             avd: (kind == Kind::Emulator).then(|| name.into()),
             kind,
             state,
+        }
+    }
+
+    #[test]
+    fn compact_toolbar_stays_under_32_points() {
+        let ctx = egui::Context::default();
+        configure_theme(&ctx);
+        let mut app = PhoneMirrorApp::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let response = ui.scope(|ui| app.device_toolbar(ui));
+                assert!(response.response.rect.height() <= 32.0, "toolbar height: {}", response.response.rect.height());
+            });
+        });
+    }
+
+    #[test]
+    fn split_workspace_fits_minimum_window() {
+        for width in [720.0, 1060.0, 1440.0] {
+            for extra in 1..=3 {
+                let ctx = egui::Context::default();
+                configure_theme(&ctx);
+                let mut app = PhoneMirrorApp::default();
+                app.split.set_count(extra);
+                for _ in 0..2 {
+                    let output = ctx.run(egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 820.0))),
+                        ..Default::default()
+                    }, |ctx| app.show_workspace(ctx));
+                    for shape in output.shapes {
+                        let rect = shape.shape.visual_bounding_rect();
+                        if rect.is_finite() && rect.is_positive() {
+                            assert!(rect.right() <= width + 8.0, "split {extra} overflow at {width}: {rect:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_reuses_launcher_texture_across_frames() {
+        let ctx = egui::Context::default();
+        configure_theme(&ctx);
+        let mut app = PhoneMirrorApp::default();
+        let mut texture_id = None;
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| app.device_library(ui));
+            });
+            let texture = ctx.data_mut(|data| {
+                data.get_temp::<egui::TextureHandle>(egui::Id::new("launcher_icon"))
+            }).expect("sidebar must load the launcher icon");
+            assert_eq!(texture.size(), [64, 64]);
+            if let Some(previous) = texture_id {
+                assert_eq!(previous, texture.id());
+            }
+            texture_id = Some(texture.id());
         }
     }
 

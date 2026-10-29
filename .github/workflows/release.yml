@@ -196,9 +196,12 @@ jobs:
 
             ### Requirements
             - [adb](https://developer.android.com/tools/releases/platform-tools) (Android Debug Bridge)
-            - [scrcpy](https://github.com/Genymobile/scrcpy) (Screen Copy)
+            - [scrcpy 4.1](https://github.com/Genymobile/scrcpy) and its matching server
+            - FFmpeg for embedded video decoding
 
-            Install both via:
-            - **macOS**: `brew install android-platform-tools scrcpy`
-            - **Linux**: `sudo apt install adb scrcpy`
+            macOS builds are ad-hoc signed, not notarized. Live-device acceptance is not established by fixture tests.
+
+            Install runtime tools via:
+            - **macOS**: `brew install --cask android-platform-tools`, then `brew install scrcpy ffmpeg`
+            - **Linux**: install adb, FFmpeg and scrcpy 4.1 (distribution packages may provide an older scrcpy)
             - **Windows**: Download from their respective GitHub releases

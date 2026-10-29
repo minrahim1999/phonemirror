@@ -12,7 +12,15 @@ enum Tab {
     Connect,
 }
 
-type WirelessJob = (mpsc::Receiver<Result<String, String>>, Arc<AtomicBool>);
+enum WirelessResult {
+    Message(String),
+    Connections(Vec<wireless::Service>),
+}
+
+type WirelessJob = (
+    mpsc::Receiver<Result<WirelessResult, String>>,
+    Arc<AtomicBool>,
+);
 
 #[derive(Default)]
 pub struct WirelessUi {
@@ -20,6 +28,7 @@ pub struct WirelessUi {
     pairing_address: String,
     code: String,
     connect_address: String,
+    connections: Vec<wireless::Service>,
     qr: Option<QrSession>,
     job: Option<WirelessJob>,
     message: String,
@@ -38,6 +47,14 @@ impl Drop for WirelessUi {
 }
 
 impl WirelessUi {
+    pub fn disconnect(&mut self, ctx: &egui::Context, serial: String) {
+        if self.busy() {
+            return;
+        }
+        self.operation = "Disconnecting selected wireless connection".into();
+        self.start(ctx, move |adb| wireless::disconnect(adb, &serial));
+    }
+
     pub fn busy(&self) -> bool {
         self.job.is_some()
     }
@@ -55,7 +72,18 @@ impl WirelessUi {
             self.started = None;
             self.qr = None;
             self.error = result.is_err();
-            self.message = result.unwrap_or_else(|e| e);
+            self.message = match result {
+                Ok(WirelessResult::Message(message)) => message,
+                Ok(WirelessResult::Connections(connections)) => {
+                    self.connections = connections;
+                    if self.connections.is_empty() {
+                        "No connection addresses discovered. Enter IP address & port from the main Wireless debugging page below.".into()
+                    } else {
+                        "Choose your phone below, then connect using its IP address.".into()
+                    }
+                }
+                Err(error) => error,
+            };
             return true;
         }
         false
@@ -65,6 +93,14 @@ impl WirelessUi {
         &mut self,
         ctx: &egui::Context,
         work: impl FnOnce(&mut wireless::LocalAdb) -> Result<String, String> + Send + 'static,
+    ) {
+        self.start_job(ctx, move |adb| work(adb).map(WirelessResult::Message));
+    }
+
+    fn start_job(
+        &mut self,
+        ctx: &egui::Context,
+        work: impl FnOnce(&mut wireless::LocalAdb) -> Result<WirelessResult, String> + Send + 'static,
     ) {
         let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -146,7 +182,23 @@ impl WirelessUi {
                     }
                 }
                 Tab::Connect => {
-                    instruction(ui, "1", "Return to Wireless debugging", "Close the pairing dialog. Find IP address & port on the main Wireless debugging page.");
+                    ui.label(egui::RichText::new("Connect by IP for Flutter / VS Code").strong());
+                    muted(ui, "Avoid unsupported device names by opening a direct IP connection. Discovery only lists addresses; choose your phone before connecting.");
+                    if ui.button("Find wireless phones").clicked() {
+                        self.connections.clear();
+                        self.operation = "Finding wireless connection addresses".into();
+                        self.start_job(ui.ctx(), |adb| wireless::discover_connections(adb).map(WirelessResult::Connections));
+                    }
+                    for service in &self.connections {
+                        ui.push_id(&service.endpoint, |ui| {
+                            ui.label(&service.name);
+                            if ui.selectable_label(self.connect_address == service.endpoint, &service.endpoint).clicked() {
+                                self.connect_address = service.endpoint.clone();
+                            }
+                        });
+                    }
+                    ui.add_space(8.0);
+                    muted(ui, "Not discovered? Enter IP address & port from the main Wireless debugging page. No terminal command or new pairing code is needed if already paired.");
                     notice(ui, "Use the connection port", "This is different from the pairing port. Copy the current value; it can change when Wireless debugging restarts.", false);
                     field(ui, "Connection IP address & port", &mut self.connect_address, "192.168.1.20:40157", false);
                     if primary(ui, "Connect phone").clicked() {
@@ -192,8 +244,12 @@ impl WirelessUi {
             notice(ui, title, detail, self.error);
             if self.error {
                 ui.add(
-                    egui::Label::new(egui::RichText::new(&self.message).small().color(crate::app::RED))
-                        .wrap(),
+                    egui::Label::new(
+                        egui::RichText::new(&self.message)
+                            .small()
+                            .color(crate::app::RED),
+                    )
+                    .wrap(),
                 );
             }
             ui.collapsing("Technical details", |ui| {
@@ -251,7 +307,11 @@ fn field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str, passwor
     );
 }
 fn result_title(message: &str, error: bool) -> &'static str {
-    if message.contains("No route to host") {
+    if message.starts_with("Disconnected ") {
+        "Wireless connection disconnected"
+    } else if message.starts_with("Wireless device connected at ") {
+        "Connected by IP"
+    } else if message.contains("No route to host") {
         "The phone is not reachable from this laptop"
     } else if message.contains("Connection refused") {
         "The phone is not accepting this port"
@@ -270,7 +330,11 @@ fn result_title(message: &str, error: bool) -> &'static str {
     }
 }
 fn result_guidance(message: &str, error: bool) -> &'static str {
-    if message.contains("No route to host") {
+    if message.starts_with("Disconnected ") {
+        "Only the selected connection was disconnected. Pairing and other connections are preserved. ADB discovery may reconnect the service automatically."
+    } else if message.starts_with("Wireless device connected at ") {
+        "In VS Code, run Developer: Reload Window and select the IP-address device. This bypasses service-name parsing issues; it does not modify Flutter. The port may change when Wireless debugging restarts."
+    } else if message.contains("No route to host") {
         "The laptop could not reach the phone before code verification. Recheck the phone IP, macOS Local Network permissions, and Wi-Fi client isolation. A fresh code cannot fix a blocked network route."
     } else if message.contains("Connection refused") {
         "The address was reached but this port refused the connection. Keep the pairing dialog open and use its fresh port; do not use the main connection port for pairing."
@@ -366,6 +430,26 @@ mod tests {
         );
         assert!(result_guidance("No route to host", true).contains("before code verification"));
     }
+    #[test]
+    fn discovery_result_requires_user_selection_and_preserves_manual_address() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = WirelessUi::default();
+        panel.connect_address = "192.168.1.20:1234".into();
+        panel.job = Some((rx, Arc::new(AtomicBool::new(false))));
+        let found = wireless::services("phone (2)\t_adb-tls-connect._tcp\t192.168.1.192:36801");
+        tx.send(Ok(WirelessResult::Connections(found))).unwrap();
+        assert!(panel.poll());
+        assert!(!panel.busy());
+        assert!(!panel.error);
+        assert_eq!(panel.connections.len(), 1);
+        assert_eq!(panel.connect_address, "192.168.1.20:1234");
+        assert!(panel.message.contains("Choose your phone"));
+        assert!(
+            result_guidance("Wireless device connected at address", false)
+                .contains("Reload Window")
+        );
+    }
+
     #[test]
     fn worker_result_clears_qr_and_busy_state() {
         let (tx, rx) = mpsc::channel();

@@ -491,6 +491,37 @@ fn connect(port: u16, shared: &Shared, deadline: Instant) -> Result<TcpStream, S
         }
     }
 }
+// Keep server launch options independently testable without contacting a device.
+fn server_args<'a>(serial: &'a str, classpath: &'a str, id: &'a str) -> Vec<&'a str> {
+    vec![
+        "-s",
+        serial,
+        "shell",
+        classpath,
+        "app_process",
+        "/",
+        "com.genymobile.scrcpy.Server",
+        "4.1",
+        id,
+        "tunnel_forward=true",
+        "audio=false",
+        "control=true",
+        // Session-scoped activity pulses work on battery/Wi-Fi, without changing settings.
+        "keep_active=true",
+        "power_on=true",
+        "video_codec=h264",
+        "max_size=1280",
+        "max_fps=30",
+        "send_device_meta=false",
+        "send_frame_meta=true",
+        "send_stream_meta=false",
+        "send_dummy_byte=true",
+        "clipboard_autosync=false",
+        "log_level=info",
+        "cleanup=false",
+    ]
+}
+
 fn run(
     config: &Config,
     shared: &Arc<Shared>,
@@ -526,30 +557,7 @@ fn run(
     r.port = Some(port);
     let classpath = format!("CLASSPATH={}", r.remote);
     let id = format!("scid={scid}");
-    let args = [
-        "-s",
-        &config.serial,
-        "shell",
-        &classpath,
-        "app_process",
-        "/",
-        "com.genymobile.scrcpy.Server",
-        "4.1",
-        &id,
-        "tunnel_forward=true",
-        "audio=false",
-        "control=true",
-        "video_codec=h264",
-        "max_size=1280",
-        "max_fps=30",
-        "send_device_meta=false",
-        "send_frame_meta=true",
-        "send_stream_meta=false",
-        "send_dummy_byte=true",
-        "clipboard_autosync=false",
-        "log_level=info",
-        "cleanup=false",
-    ];
+    let args = server_args(&config.serial, &classpath, &id);
     let mut server = Owned::spawn(
         command(config, &config.adb_path)
             .args(args)
@@ -946,6 +954,21 @@ fn ppm(reader: &mut impl BufRead) -> io::Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn server_keeps_active_without_changing_android_settings() {
+        let args = server_args("fixture-serial", "CLASSPATH=/fixture.jar", "scid=12345678");
+        assert_eq!(
+            &args[..4],
+            &["-s", "fixture-serial", "shell", "CLASSPATH=/fixture.jar"]
+        );
+        assert!(args.contains(&"keep_active=true"));
+        assert!(args.contains(&"power_on=true"));
+        assert!(args.contains(&"cleanup=false"));
+        assert!(!args
+            .iter()
+            .any(|arg| arg.starts_with("stay_awake=") || arg.starts_with("screen_off_timeout=")));
+    }
+
     #[test]
     fn key_layout() {
         assert_eq!(

@@ -142,13 +142,6 @@ pub fn install(ctx: &egui::Context) -> Result<AppMenu, muda::Error> {
         "File",
         true,
         &[
-            &refresh,
-            &item(
-                "Pair a Wi-Fi device…",
-                Action::PairWifi,
-                Some((CMD_SHIFT, Code::KeyP)),
-            ),
-            &sep(),
             &screenshot,
             &record,
             &sep(),
@@ -214,7 +207,19 @@ pub fn install(ctx: &egui::Context) -> Result<AppMenu, muda::Error> {
         &[&item("PhoneMirror on GitHub", Action::Help, None)],
     )?;
 
-    let menu = Menu::with_items(&[&app, &file, &view, &device, &window, &help])?;
+    let settings = Submenu::with_items(
+        "Settings",
+        true,
+        &[
+            &refresh,
+            &item(
+                "Pair a Wi-Fi device…",
+                Action::PairWifi,
+                Some((CMD_SHIFT, Code::KeyP)),
+            ),
+        ],
+    )?;
+    let menu = Menu::with_items(&[&app, &file, &view, &device, &settings, &window, &help])?;
     menu.init_for_nsapp();
     window.set_as_windows_menu_for_nsapp();
     help.set_as_help_menu_for_nsapp();

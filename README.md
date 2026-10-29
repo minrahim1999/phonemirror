@@ -118,10 +118,25 @@ Custom paths are saved in `~/Library/Application Support/PhoneMirror/tools.conf`
 If a tool is missing, the main screen lists its install command.
 
 Click the live screen to focus it, drag to swipe, and type or paste text.
-The grouped top toolbar contains mirror start/stop, screenshot, recording, keyboard
-forwarding, zoom out/in, **Fit**, fullscreen and **Info**. Hover an icon for its label.
-The **Device** menu provides **Back**, **Home**, **Recent apps**, **Power**, volume
-controls and Wi-Fi pairing. Use the sidebar Wi-Fi button to open pairing directly.
+The compact toolbar contains mirror start/stop, screenshot, **Device**, **Fit**, fullscreen
+and **Split**. Recording, keyboard forwarding, zoom and information/tools live in **Device**.
+Use **Split** to open 2–4 independent device mirrors; choose an online target and Start
+in each additional pane. Reducing panes stops the hidden sessions. Hover an icon for its label.
+The **Device** menu provides **Wake screen**, **Back**, **Home**, **Recent apps**,
+**Power**, volume controls and Wi-Fi pairing. **Wake screen** wakes without toggling
+an awake screen off; it does not bypass a PIN or biometric lock.
+While mirroring, scrcpy 4.1 keep-active prevents idle sleep on USB or Wi-Fi, even
+on battery, without changing Android settings. Normal timeout behavior resumes
+when the session ends. Keeping the screen awake increases battery use.
+On macOS, **Settings** beside **Device** contains Refresh devices and Wi-Fi pairing.
+Other platforms provide a sidebar Settings dropdown.
+
+Open **Tools** in the bottom status bar for **Logcat** and **Diagnostics**. Logcat starts
+paused: explicitly choose a target, then Resume. Search, minimum severity and copy act on
+the latest snapshot (up to 500 lines / 256 KiB, refreshed every two seconds). Collection
+is read-only; it never clears device logs. Diagnostics includes connection health, tool
+paths/versions and mirror session errors. Review logs/diagnostics for private data before sharing.
+Interactive terminals and arbitrary ADB commands are not included.
 Zoom is relative to the fitted screen (50–300%); use the scrollbars or trackpad to pan.
 Device swipe/drag gestures are never used for canvas panning.
 **Esc** releases keyboard focus. Text injection is limited by Android's supported
