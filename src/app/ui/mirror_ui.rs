@@ -214,7 +214,7 @@ impl MirrorUi {
                         Status::Starting => {
                             ui.spinner();
                             ui.label("Connecting to device…");
-                            crate::app::desktop_ui::muted(
+                            crate::app::ui::components::muted(
                                 ui,
                                 "Starting screen capture and video decoder",
                             );

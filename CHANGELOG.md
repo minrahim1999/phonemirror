@@ -5,6 +5,21 @@ All notable changes to PhoneMirror will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-10-29
+
+### Changed
+- Redesigned the desktop workspace with segmented capsule controls, a rounded search field, blue device selection and a collapsible/filterable sidebar.
+- Added macOS full-size window content, a transparent titlebar and system typography.
+- Extracted theme, reusable widgets, sidebar, toolbar, canvas, device information, setup and pairing layout into focused Rust modules.
+- Preserved existing device targeting, action guards, mirroring controls and fit-relative zoom.
+
+### Tests
+- All 32 checked headless workspace paint fingerprints matched before and after module extraction.
+- Added deterministic workspace rendering coverage; the local suite contains 80 tests.
+
+### Limitations
+- Sidebar rows display connection type rather than Android version. macOS builds remain ad-hoc signed, not notarized; fixture tests do not prove live-device acceptance.
+
 ## [2.5.1] - 2026-10-29
 
 ### Changed

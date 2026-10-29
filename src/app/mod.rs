@@ -18,14 +18,17 @@ pub(crate) fn run() -> eframe::Result {
             .with_title("PhoneMirror")
             .with_inner_size([1060.0, 820.0])
             .with_min_inner_size([720.0, 620.0])
-            .with_icon(icon),
+            .with_icon(icon)
+            .with_fullsize_content_view(cfg!(target_os = "macos"))
+            .with_title_shown(!cfg!(target_os = "macos"))
+            .with_titlebar_shown(!cfg!(target_os = "macos")),
         ..Default::default()
     };
     eframe::run_native(
         "PhoneMirror",
         options,
         Box::new(|cc| {
-            desktop_ui::configure_theme(&cc.egui_ctx);
+            ui::theme::configure_theme(&cc.egui_ctx);
             Ok(Box::new(PhoneMirrorApp::default()))
         }),
     )
@@ -80,13 +83,13 @@ fn load_icon() -> egui::IconData {
 
 // ─── Colors ───────────────────────────────────────────────
 
-const BG: egui::Color32 = egui::Color32::from_rgb(21, 23, 28);
-const SIDEBAR: egui::Color32 = egui::Color32::from_rgb(27, 30, 36);
-const CARD_BG: egui::Color32 = egui::Color32::from_rgb(35, 39, 47);
-const SURFACE_HOVER: egui::Color32 = egui::Color32::from_rgb(42, 47, 57);
-const SELECTED: egui::Color32 = egui::Color32::from_rgb(44, 51, 66);
-const BORDER: egui::Color32 = egui::Color32::from_rgb(49, 54, 65);
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(76, 128, 246);
+const BG: egui::Color32 = egui::Color32::from_rgb(29, 29, 31);
+const SIDEBAR: egui::Color32 = egui::Color32::from_rgb(39, 39, 41);
+const CARD_BG: egui::Color32 = egui::Color32::from_rgb(46, 46, 49);
+const SURFACE_HOVER: egui::Color32 = egui::Color32::from_rgb(60, 60, 64);
+const SELECTED: egui::Color32 = egui::Color32::from_rgb(48, 70, 110);
+const BORDER: egui::Color32 = egui::Color32::from_rgb(55, 55, 58);
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(10, 112, 255);
 const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgb(38, 52, 86);
 const ACCENT_TEXT: egui::Color32 = egui::Color32::from_rgb(150, 184, 255);
 const INFO_FILL: egui::Color32 = egui::Color32::from_rgb(30, 39, 60);
@@ -94,8 +97,8 @@ const ERROR_FILL: egui::Color32 = egui::Color32::from_rgb(56, 32, 35);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(95, 211, 154);
 const RED: egui::Color32 = egui::Color32::from_rgb(242, 133, 123);
 const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 188, 106);
-const TEXT: egui::Color32 = egui::Color32::from_rgb(232, 234, 240);
-const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(144, 151, 166);
+const TEXT: egui::Color32 = egui::Color32::from_rgb(232, 232, 234);
+const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(151, 151, 157);
 
 // ─── App ──────────────────────────────────────────────────
 
@@ -120,6 +123,8 @@ struct PhoneMirrorApp {
     selected_device: Option<String>,
     page: desktop_ui::Page,
     device_filter: String,
+    sidebar_open: bool,
+    hide_unavailable: bool,
     show_device_info: bool,
     launch_job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     starting_emulator: Option<(String, Instant)>,
@@ -177,6 +182,8 @@ impl Default for PhoneMirrorApp {
             selected_device: None,
             page: desktop_ui::Page::Devices,
             device_filter: String::new(),
+            sidebar_open: true,
+            hide_unavailable: false,
             show_device_info: false,
             launch_job: None,
             starting_emulator: None,
@@ -234,7 +241,7 @@ impl eframe::App for PhoneMirrorApp {
                 .show(ctx, |ui| {
                     ui.set_width(340.0);
                     ui.label(egui::RichText::new("You still have active sessions").size(20.0).strong());
-                    desktop_ui::muted(ui, "Keep PhoneMirror running in the background, or stop its embedded screen and recording before quitting. Other apps are not affected.");
+                    ui::components::muted(ui, "Keep PhoneMirror running in the background, or stop its embedded screen and recording before quitting. Other apps are not affected.");
                     ui.add_space(12.0);
                     if ui.add_sized([ui.available_width(), 42.0], egui::Button::new(egui::RichText::new("Close sessions & quit").color(egui::Color32::WHITE)).fill(RED).corner_radius(8)).clicked() {
                         self.close_mirror();

@@ -126,7 +126,7 @@ impl WirelessUi {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        use crate::app::desktop_ui::{heading, muted, notice, primary};
+        use crate::app::ui::components::{heading, muted, notice, primary};
         heading(
             ui,
             "Wi-Fi pairing",
@@ -292,7 +292,7 @@ impl WirelessUi {
 
 fn instruction(ui: &mut egui::Ui, number: &str, title: &str, body: &str) {
     ui.label(egui::RichText::new(format!("{number}  {title}")).strong());
-    crate::app::desktop_ui::muted(ui, body);
+    crate::app::ui::components::muted(ui, body);
 }
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str, password: bool) {
     ui.label(label);

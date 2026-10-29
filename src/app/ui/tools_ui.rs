@@ -305,7 +305,7 @@ mod tests {
     fn drawer_tabs_fit_minimum_window_without_collecting_logs() {
         for diagnostics in [false, true] {
             let ctx = egui::Context::default();
-            super::super::desktop_ui::configure_theme(&ctx);
+            super::super::theme::configure_theme(&ctx);
             let mut app = PhoneMirrorApp::default();
             app.drawer.serial =
                 "very-long-device-identifier-with-spaces-and-a-wireless-host-address.local:5555"
