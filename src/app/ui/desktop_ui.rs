@@ -310,6 +310,31 @@ fn device_row(
         ))
 }
 
+const TOOLBAR_HEIGHT: f32 = 28.0;
+
+fn toolbar_style(ui: &mut egui::Ui) {
+    let style = ui.style_mut();
+    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    style.spacing.interact_size.y = TOOLBAR_HEIGHT;
+    style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::proportional(13.0),
+    );
+    // Menu triggers and icon actions share the same quiet, borderless surface.
+    let widgets = &mut style.visuals.widgets;
+    widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+    for state in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+        &mut widgets.open,
+    ] {
+        state.bg_stroke = egui::Stroke::NONE;
+        state.corner_radius = egui::CornerRadius::same(5);
+    }
+}
+
 fn tool(
     ui: &mut egui::Ui,
     label: &str,
@@ -321,7 +346,7 @@ fn tool(
     let background = ui.painter().add(egui::Shape::Noop);
     let button = egui::Button::new(if icon.is_some() { "" } else { label })
         .frame(false)
-        .min_size(egui::vec2(if icon.is_some() { 28.0 } else { 34.0 }, 26.0));
+        .min_size(egui::vec2(if icon.is_some() { 28.0 } else { 34.0 }, TOOLBAR_HEIGHT));
     let response = ui.add_enabled(enabled, button);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
@@ -344,7 +369,7 @@ fn tool(
         .lerp_to_gamma(ACCENT_SOFT, sel);
     ui.painter().set(
         background,
-        egui::epaint::RectShape::filled(response.rect, 7, fill),
+        egui::epaint::RectShape::filled(response.rect, 5, fill),
     );
     if response.has_focus() {
         ui.painter().rect_stroke(
@@ -369,17 +394,10 @@ fn tool(
     response.on_hover_text(label)
 }
 fn tool_group(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(CARD_BG)
-        .stroke(egui::Stroke::new(1.0, BORDER.gamma_multiply(0.7)))
-        .corner_radius(7)
-        .inner_margin(2)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                content(ui);
-            });
-        });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        content(ui);
+    });
 }
 
 fn detail(ui: &mut egui::Ui, label: &str, value: &str) {
@@ -422,7 +440,7 @@ impl PhoneMirrorApp {
             )
             .show(ctx, |ui| {
                 if self.page == Page::Devices && ui.available_width() >= 580.0 {
-                    ui.horizontal_top(|ui| {
+                    ui.horizontal(|ui| {
                         ui.allocate_ui_with_layout(
                             egui::vec2(170.0, 36.0),
                             egui::Layout::top_down(egui::Align::Min),
@@ -590,14 +608,12 @@ impl PhoneMirrorApp {
     fn device_toolbar(&mut self, ui: &mut egui::Ui) {
         let ready = self.device_status.connected && self.device_status.scrcpy_health.is_empty();
         let streaming = self.embedded.streaming();
-        ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
-        ui.spacing_mut().button_padding = egui::vec2(7.0, 4.0);
-        ui.spacing_mut().interact_size.y = 26.0;
+        toolbar_style(ui);
         ui.horizontal_wrapped(|ui| {
             tool_group(ui, |ui| {
                 if tool(ui, if self.embedded.active() { "Stop mirroring" } else { "Start mirroring here" },
                     Some(if self.embedded.active() { Icon::Stop } else { Icon::Play }),
-                    ready || self.embedded.active(), self.embedded.active()).clicked() {
+                    ready || self.embedded.active(), false).clicked() {
                     if self.embedded.active() { self.embedded.stop(); } else { self.start_mirror(ui.ctx()); }
                 }
                 if tool(ui, "Save screenshot", Some(Icon::Camera), self.device_status.connected, false).clicked() {
@@ -1201,6 +1217,38 @@ mod tests {
             avd: (kind == Kind::Emulator).then(|| name.into()),
             kind,
             state,
+        }
+    }
+
+    #[test]
+    fn toolbar_controls_share_height_and_centerline() {
+        for enabled in [false, true] {
+            let ctx = egui::Context::default();
+            configure_theme(&ctx);
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    toolbar_style(ui);
+                    let mut rects = Vec::new();
+                    ui.horizontal_wrapped(|ui| {
+                        tool_group(ui, |ui| {
+                            rects.push(tool(ui, "Stop mirroring", Some(Icon::Stop), enabled, false).rect);
+                            rects.push(tool(ui, "Save screenshot", Some(Icon::Camera), enabled, false).rect);
+                        });
+                        rects.push(ui.menu_button("Device", |_| {}).response.rect);
+                        tool_group(ui, |ui| {
+                            rects.push(tool(ui, "Fit", None, enabled, false).rect);
+                            rects.push(tool(ui, "Toggle fullscreen", Some(Icon::Expand), true, false).rect);
+                        });
+                        rects.push(ui.menu_button("Split", |_| {}).response.rect);
+                    });
+                    for rect in &rects {
+                        assert!((rect.height() - TOOLBAR_HEIGHT).abs() < 0.1, "height: {rect:?}");
+                        assert!((rect.center().y - rects[0].center().y).abs() < 0.1, "alignment: {rects:?}");
+                    }
+                    assert_eq!(ui.visuals().widgets.inactive.weak_bg_fill, egui::Color32::TRANSPARENT);
+                    assert_eq!(ui.visuals().widgets.inactive.bg_stroke, egui::Stroke::NONE);
+                });
+            });
         }
     }
 
