@@ -277,14 +277,129 @@ pub fn disconnect(adb: &mut impl Adb, serial: &str) -> Result<String, String> {
     Ok(format!("Disconnected {serial}. Pairing is preserved. ADB discovery may reconnect this service automatically."))
 }
 
+/// How a discovered connection address relates to ADB's existing transports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// An online transport already uses this exact IP:port; Flutter can list it.
+    ByIp,
+    /// Online only under its mDNS service name (which Flutter may fail to parse).
+    ByNameOnly,
+    /// Not connected.
+    Available,
+    /// An older advertisement for a phone that has a newer or live address.
+    Stale,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Candidate {
+    pub service: Service,
+    /// Model reported by an existing transport for this phone, if any.
+    pub model: Option<String>,
+    pub link: Link,
+}
+
+/// Android re-advertises as "name (N)" when Wireless debugging restarts while an older
+/// record is still cached. Split that suffix so every record groups under one phone.
+fn base_name(name: &str) -> (&str, u32) {
+    name.strip_suffix(')')
+        .and_then(|rest| rest.rsplit_once(" ("))
+        .and_then(|(base, n)| n.parse().ok().map(|n| (base, n)))
+        .unwrap_or((name, 1))
+}
+
 /// Discover connection endpoints only; never pair or connect an arbitrary phone.
-pub fn discover_connections(adb: &mut impl Adb) -> Result<Vec<Service>, String> {
+pub fn discover_connections(adb: &mut impl Adb) -> Result<Vec<Candidate>, String> {
     let text = adb.run(&["mdns", "services"], None)?;
     let mut found = services(&text);
     found.retain(|service| service.kind == "_adb-tls-connect._tcp");
     found.sort_by(|a, b| a.endpoint.cmp(&b.endpoint).then(a.name.cmp(&b.name)));
     found.dedup_by(|a, b| a.endpoint == b.endpoint);
-    Ok(found)
+    if found.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Host-local listing of existing transports; nothing is sent to any phone.
+    let transports = adb
+        .run(&["devices", "-l"], None)
+        .map(|text| super::devices::transports(&text))
+        .unwrap_or_default();
+    Ok(classify(found, &transports))
+}
+
+fn classify(found: Vec<Service>, transports: &[super::devices::Device]) -> Vec<Candidate> {
+    use super::devices::State;
+    let online = |serial: &str| {
+        transports
+            .iter()
+            .find(|d| d.serial.as_deref() == Some(serial) && d.state == State::Online)
+    };
+    let host = |s: &Service| s.endpoint.parse::<SocketAddr>().ok().map(|a| a.ip());
+    let mut out: Vec<Candidate> = found
+        .into_iter()
+        .map(|service| {
+            let by_ip = online(&service.endpoint);
+            let by_name = online(&format!("{}._adb-tls-connect._tcp", service.name));
+            let link = if by_ip.is_some() {
+                Link::ByIp
+            } else if by_name.is_some() {
+                Link::ByNameOnly
+            } else {
+                Link::Available
+            };
+            let model = by_ip.or(by_name).map(|d| d.name.clone());
+            Candidate {
+                service,
+                model,
+                link,
+            }
+        })
+        .collect();
+    let snapshot = out.clone();
+    for candidate in &mut out {
+        let (base, n) = base_name(&candidate.service.name);
+        let siblings = snapshot.iter().filter(|other| {
+            other.service.endpoint != candidate.service.endpoint
+                && host(&other.service) == host(&candidate.service)
+                && base_name(&other.service.name).0 == base
+        });
+        let mut newer = false;
+        for other in siblings {
+            if candidate.model.is_none() {
+                candidate.model = other.model.clone();
+            }
+            // A live transport proves its port works; otherwise the higher suffix is newer.
+            newer |= other.link != Link::Available || base_name(&other.service.name).1 > n;
+        }
+        if candidate.link == Link::Available && newer {
+            candidate.link = Link::Stale;
+        }
+    }
+    out.sort_by_key(|c| match c.link {
+        Link::ByIp => 0,
+        Link::ByNameOnly => 1,
+        Link::Available => 2,
+        Link::Stale => 3,
+    });
+    out
+}
+
+/// Distinct phones among candidates (same host and base service name).
+pub fn phone_count(candidates: &[Candidate]) -> usize {
+    let mut phones: Vec<(Option<std::net::IpAddr>, &str)> = candidates
+        .iter()
+        .map(|c| {
+            (
+                c.service
+                    .endpoint
+                    .parse::<SocketAddr>()
+                    .ok()
+                    .map(|a| a.ip()),
+                base_name(&c.service.name).0,
+            )
+        })
+        .collect();
+    phones.sort();
+    phones.dedup();
+    phones.len()
 }
 
 pub fn connect(adb: &mut impl Adb, address: &str) -> Result<String, String> {
@@ -412,11 +527,74 @@ mod tests {
     #[test]
     fn discovery_lists_only_unique_connection_endpoints_without_connecting() {
         let mut adb = fake(vec![("mdns services", "phone (2)\t_adb-tls-connect._tcp.\t192.168.1.192:36801\nphone\t_adb-tls-connect._tcp\t192.168.1.192:36801\npair\t_adb-tls-pairing._tcp\t192.168.1.192:40000\nother\t_adb-tls-connect._tcp\t[::1]:1234")]);
+        adb.replies
+            .push_back(("devices -l", "List of devices attached"));
         let found = discover_connections(&mut adb).unwrap();
         assert_eq!(found.len(), 2);
-        assert!(found.iter().any(|s| s.endpoint == "192.168.1.192:36801"));
-        assert!(found.iter().all(|s| s.kind == "_adb-tls-connect._tcp"));
-        assert_eq!(adb.calls, ["mdns services"]);
+        assert!(found
+            .iter()
+            .any(|c| c.service.endpoint == "192.168.1.192:36801"));
+        assert!(found
+            .iter()
+            .all(|c| c.service.kind == "_adb-tls-connect._tcp"));
+        assert_eq!(adb.calls, ["mdns services", "devices -l"]);
+    }
+
+    #[test]
+    fn readvertised_phone_groups_and_marks_old_port_stale() {
+        // Observed shape: one phone advertised twice after Wireless debugging restarted,
+        // connected both by IP and by its spaced mDNS name on the newer port.
+        let mut adb = fake(vec![
+            (
+                "mdns services",
+                "List of discovered mdns services\nadb-RRCX-zi (2)\t_adb-tls-connect._tcp\t192.168.1.192:40639\nadb-RRCX-zi\t_adb-tls-connect._tcp\t192.168.1.192:38157",
+            ),
+            (
+                "devices -l",
+                "List of devices attached\n192.168.1.192:40639    device product:a15x model:SM_A156E device:a15x transport_id:14\nadb-RRCX-zi (2)._adb-tls-connect._tcp device product:a15x model:SM_A156E device:a15x transport_id:16",
+            ),
+        ]);
+        let found = discover_connections(&mut adb).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(phone_count(&found), 1, "both records are the same phone");
+        assert_eq!(found[0].service.endpoint, "192.168.1.192:40639");
+        assert_eq!(found[0].link, Link::ByIp);
+        assert_eq!(found[1].service.endpoint, "192.168.1.192:38157");
+        assert_eq!(found[1].link, Link::Stale);
+        assert!(found.iter().all(|c| c.model.as_deref() == Some("SM A156E")));
+    }
+
+    #[test]
+    fn name_only_transport_and_suffix_ordering() {
+        let transports =
+            crate::app::devices::transports("phone (3)._adb-tls-connect._tcp device model:Pixel_9");
+        let svc = |name: &str, endpoint: &str| Service {
+            name: name.into(),
+            kind: "_adb-tls-connect._tcp".into(),
+            endpoint: endpoint.into(),
+        };
+        let found = classify(
+            vec![
+                svc("phone (3)", "10.0.0.5:5000"),
+                svc("other", "10.0.0.9:6000"),
+            ],
+            &transports,
+        );
+        assert_eq!(found[0].link, Link::ByNameOnly);
+        assert_eq!(
+            found[1].link,
+            Link::Available,
+            "different phones never go stale"
+        );
+        // Without any transport, the higher suffix is the newer advertisement.
+        let found = classify(
+            vec![svc("a (2)", "10.0.0.5:2"), svc("a", "10.0.0.5:1")],
+            &[],
+        );
+        assert_eq!(found[0].service.name, "a (2)");
+        assert_eq!(found[0].link, Link::Available);
+        assert_eq!(found[1].link, Link::Stale);
+        assert_eq!(base_name("x (y)"), ("x (y)", 1));
     }
 
     #[test]

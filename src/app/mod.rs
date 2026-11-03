@@ -126,6 +126,8 @@ struct PhoneMirrorApp {
     sidebar_open: bool,
     hide_unavailable: bool,
     show_device_info: bool,
+    /// Device shown in the guided "Forget device" dialog, captured when it opened.
+    forget_device: Option<devices::Device>,
     launch_job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     starting_emulator: Option<(String, Instant)>,
     /// Re-probe tools on the next refresh (startup, manual refresh, settings change).
@@ -185,6 +187,7 @@ impl Default for PhoneMirrorApp {
             sidebar_open: true,
             hide_unavailable: false,
             show_device_info: false,
+            forget_device: None,
             launch_job: None,
             starting_emulator: None,
             tools_dirty: true,

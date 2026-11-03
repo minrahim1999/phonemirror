@@ -480,3 +480,139 @@ fn stopped_and_unauthorized_selections_disable_actions() {
         assert!(app.device_status.device_serial.is_empty());
     }
 }
+
+#[test]
+fn disconnect_is_explicit_target_and_blocked_only_by_its_sessions() {
+    use crate::app::{mirror::Status, mirror_ui::MirrorUi};
+    let mut app = PhoneMirrorApp::default();
+    let wifi = sample("192.168.1.7:40001", "Galaxy", Kind::Wifi, State::Online);
+    let usb = sample("usb", "Pixel 9", Kind::Usb, State::Online);
+    app.inventory.devices = vec![usb.clone(), wifi.clone()];
+    app.selected_device = Some(wifi.id.clone());
+    app.sync_selection();
+    assert_eq!(app.disconnect_target(&wifi), Ok("192.168.1.7:40001".into()));
+    assert!(
+        app.disconnect_target(&usb).is_err(),
+        "USB is never disconnected"
+    );
+    // Mirroring this phone blocks its disconnect.
+    app.embedded = MirrorUi::fixture(&wifi.id, Status::Streaming, None);
+    assert!(app.disconnect_target(&wifi).is_err());
+    // Mirroring a different phone does not.
+    app.selected_device = Some(usb.id.clone());
+    app.sync_selection();
+    app.embedded = MirrorUi::fixture(&usb.id, Status::Streaming, None);
+    assert_eq!(app.disconnect_target(&wifi), Ok(wifi.id.clone()));
+    // Recording has no recorded target, so it blocks conservatively.
+    app.is_recording = true;
+    assert!(app.disconnect_target(&wifi).is_err());
+    // A device without a transport has nothing to disconnect.
+    app.is_recording = false;
+    let mut gone = wifi.clone();
+    gone.serial = None;
+    assert!(app.disconnect_target(&gone).is_err());
+}
+
+#[test]
+fn disabled_toolbar_controls_explain_why() {
+    let mut app = PhoneMirrorApp::default();
+    assert_eq!(
+        app.stream_unavailable_reason(),
+        Some("Select a device in the sidebar first.")
+    );
+    for (state, expected) in [
+        (State::Stopped, "Start this emulator first."),
+        (
+            State::Offline,
+            "This device is offline. Reconnect it, then refresh.",
+        ),
+        (
+            State::Unauthorized,
+            "Approve USB debugging on the phone, then refresh.",
+        ),
+    ] {
+        app.inventory.devices = vec![sample("one", "One", Kind::Usb, state)];
+        app.selected_device = Some("one".into());
+        app.sync_selection();
+        assert_eq!(app.device_unavailable_reason(), Some(expected));
+        assert_eq!(app.stream_unavailable_reason(), Some(expected));
+    }
+    app.inventory.devices = vec![sample("one", "One", Kind::Usb, State::Online)];
+    app.sync_selection();
+    assert_eq!(app.device_unavailable_reason(), None);
+    assert_eq!(app.mirror_unavailable_reason(), None);
+    assert_eq!(
+        app.stream_unavailable_reason(),
+        Some("Start mirroring to use this control.")
+    );
+    app.device_status.scrcpy_health = "scrcpy is missing".into();
+    assert!(app.mirror_unavailable_reason().is_some());
+    assert_eq!(
+        app.device_unavailable_reason(),
+        None,
+        "screenshots stay available"
+    );
+}
+
+#[test]
+fn forget_dialog_fits_minimum_window_and_closes_on_done() {
+    for width in [720.0, 1440.0] {
+        for (kind, listed) in [(Kind::Wifi, true), (Kind::Wifi, false), (Kind::Usb, true)] {
+            let ctx = egui::Context::default();
+            configure_theme(&ctx);
+            let mut app = PhoneMirrorApp::default();
+            let device = sample(
+                "adb-R5CX (2)._adb-tls-connect._tcp",
+                &"SM A156E ".repeat(8),
+                kind,
+                State::Online,
+            );
+            if listed {
+                app.inventory.devices = vec![device.clone()];
+                app.sync_selection();
+            }
+            app.request_forget(device);
+            for _ in 0..2 {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 620.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| app.show_workspace(ctx),
+                );
+                for shape in output.shapes {
+                    let rect = shape.shape.visual_bounding_rect();
+                    if rect.is_finite() && rect.is_positive() {
+                        assert!(
+                            rect.right() <= width + 8.0,
+                            "forget dialog overflow {width}: {rect:?}"
+                        );
+                    }
+                }
+            }
+            assert!(
+                app.forget_device.is_some(),
+                "dialog stays open until dismissed"
+            );
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 620.0))),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| app.show_workspace(ctx),
+            );
+            assert!(app.forget_device.is_none(), "Escape dismisses the dialog");
+            assert_eq!(app.page, Page::Devices, "dismissing never navigates");
+        }
+    }
+}

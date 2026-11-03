@@ -14,7 +14,7 @@ enum Tab {
 
 enum WirelessResult {
     Message(String),
-    Connections(Vec<wireless::Service>),
+    Connections(Vec<wireless::Candidate>),
 }
 
 type WirelessJob = (
@@ -28,7 +28,7 @@ pub struct WirelessUi {
     pairing_address: String,
     code: String,
     connect_address: String,
-    connections: Vec<wireless::Service>,
+    connections: Vec<wireless::Candidate>,
     qr: Option<QrSession>,
     job: Option<WirelessJob>,
     message: String,
@@ -76,8 +76,11 @@ impl WirelessUi {
                 Ok(WirelessResult::Message(message)) => message,
                 Ok(WirelessResult::Connections(connections)) => {
                     self.connections = connections;
+                    let phones = wireless::phone_count(&self.connections);
                     if self.connections.is_empty() {
                         "No connection addresses discovered. Enter IP address & port from the main Wireless debugging page below.".into()
+                    } else if self.connections.len() > phones {
+                        format!("Found {} addresses for {phones} phone(s). One phone can be advertised more than once after Wireless debugging restarts; use the address marked as connected or current.", self.connections.len())
                     } else {
                         "Choose your phone below, then connect using its IP address.".into()
                     }
@@ -189,13 +192,20 @@ impl WirelessUi {
                         self.operation = "Finding wireless connection addresses".into();
                         self.start_job(ui.ctx(), |adb| wireless::discover_connections(adb).map(WirelessResult::Connections));
                     }
-                    for service in &self.connections {
+                    for candidate in &self.connections {
+                        let service = &candidate.service;
                         ui.push_id(&service.endpoint, |ui| {
-                            ui.label(&service.name);
-                            if ui.selectable_label(self.connect_address == service.endpoint, &service.endpoint).clicked() {
-                                self.connect_address = service.endpoint.clone();
-                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.selectable_label(self.connect_address == service.endpoint, &service.endpoint).clicked() {
+                                    self.connect_address = service.endpoint.clone();
+                                }
+                                ui.label(egui::RichText::new(candidate.model.as_deref().unwrap_or(&service.name)).strong())
+                                    .on_hover_text(format!("ADB service: {}", service.name));
+                            });
+                            let (text, color) = link_label(candidate);
+                            ui.add(egui::Label::new(egui::RichText::new(text).small().color(color)).wrap());
                         });
+                        ui.add_space(4.0);
                     }
                     ui.add_space(8.0);
                     muted(ui, "Not discovered? Enter IP address & port from the main Wireless debugging page. No terminal command or new pairing code is needed if already paired.");
@@ -287,6 +297,30 @@ impl WirelessUi {
             ui.label("On macOS, review System Settings > Privacy & Security > Local Network. Allow PhoneMirror and the ADB host application if listed. Check VPN/firewall rules without disabling your firewall globally.");
             ui.label("No discovery? Pairing code uses a direct IP connection and does not require mDNS. Keep its dialog open and use a fresh code/port. USB is also available as a fallback.");
         });
+    }
+}
+
+/// Plain-language status for one discovered address, for Flutter / VS Code users.
+fn link_label(candidate: &wireless::Candidate) -> (&'static str, egui::Color32) {
+    use wireless::Link;
+    match candidate.link {
+        Link::ByIp => (
+            "Connected by IP. Flutter and VS Code can use this one; nothing else is needed.",
+            crate::app::GREEN,
+        ),
+        Link::ByNameOnly if candidate.service.name.contains(char::is_whitespace) => (
+            "Connected only by its service name, which contains a space Flutter can't read. Select it and Connect phone to add an IP connection.",
+            crate::app::YELLOW,
+        ),
+        Link::ByNameOnly => (
+            "Connected by service name. If Flutter doesn't list it, select it and Connect phone.",
+            crate::app::TEXT_DIM,
+        ),
+        Link::Available => ("Not connected yet.", crate::app::TEXT_DIM),
+        Link::Stale => (
+            "Older address for the same phone. Its port changed when Wireless debugging restarted, so connecting will likely fail.",
+            crate::app::TEXT_DIM,
+        ),
     }
 }
 
@@ -436,7 +470,14 @@ mod tests {
         let mut panel = WirelessUi::default();
         panel.connect_address = "192.168.1.20:1234".into();
         panel.job = Some((rx, Arc::new(AtomicBool::new(false))));
-        let found = wireless::services("phone (2)\t_adb-tls-connect._tcp\t192.168.1.192:36801");
+        let found = wireless::services("phone (2)\t_adb-tls-connect._tcp\t192.168.1.192:36801")
+            .into_iter()
+            .map(|service| wireless::Candidate {
+                service,
+                model: None,
+                link: wireless::Link::Available,
+            })
+            .collect();
         tx.send(Ok(WirelessResult::Connections(found))).unwrap();
         assert!(panel.poll());
         assert!(!panel.busy());
@@ -448,6 +489,33 @@ mod tests {
             result_guidance("Wireless device connected at address", false)
                 .contains("Reload Window")
         );
+    }
+
+    #[test]
+    fn duplicate_advertisements_are_explained_not_hidden() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = WirelessUi::default();
+        panel.job = Some((rx, Arc::new(AtomicBool::new(false))));
+        let candidate = |name: &str, endpoint: &str, link| wireless::Candidate {
+            service: wireless::Service {
+                name: name.into(),
+                kind: "_adb-tls-connect._tcp".into(),
+                endpoint: endpoint.into(),
+            },
+            model: Some("SM A156E".into()),
+            link,
+        };
+        let found = vec![
+            candidate("adb-X (2)", "192.168.1.192:40639", wireless::Link::ByIp),
+            candidate("adb-X", "192.168.1.192:38157", wireless::Link::Stale),
+        ];
+        assert!(link_label(&found[0]).0.contains("Flutter"));
+        assert!(link_label(&found[1]).0.contains("Older address"));
+        tx.send(Ok(WirelessResult::Connections(found))).unwrap();
+        assert!(panel.poll());
+        assert_eq!(panel.connections.len(), 2, "both addresses stay selectable");
+        assert!(panel.message.contains("2 addresses for 1 phone"));
+        assert!(panel.connect_address.is_empty(), "never auto-selects");
     }
 
     #[test]

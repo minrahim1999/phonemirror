@@ -1,6 +1,5 @@
 //! Device information window and explicit-target connection actions.
 use super::components::{detail, device_row::kind_label, muted, notice};
-use super::desktop_ui::Page;
 use crate::app::devices::Kind;
 use crate::app::PhoneMirrorApp;
 
@@ -23,13 +22,21 @@ impl PhoneMirrorApp {
                         detail(ui, "Serial", serial);
                         if device.kind == Kind::Wifi {
                             muted(ui, "Disconnect only this connection. Pairing and other connections stay intact; ADB may rediscover it.");
-                            if ui.add_enabled(!self.wireless.busy() && !self.embedded.active() && !self.is_recording, egui::Button::new("Disconnect this wireless connection")).clicked() {
-                                self.wireless.disconnect(ui.ctx(), serial.clone());
-                                self.page = Page::Wifi;
+                            let target = self.disconnect_target(&device);
+                            if ui.add_enabled(target.is_ok(), egui::Button::new("Disconnect this wireless connection")).clicked() {
+                                if let Ok(serial) = target.clone() {
+                                    self.disconnect_device(ui.ctx(), serial);
+                                }
                             }
-                            if self.embedded.active() || self.is_recording {
-                                muted(ui, "Stop PhoneMirror sessions before disconnecting.");
+                            if let Err(reason) = target {
+                                muted(ui, reason);
                             }
+                        }
+                    }
+                    if device.kind != Kind::Emulator {
+                        muted(ui, "To make a clean new connection, forget this device and pair it again.");
+                        if ui.button("Forget this device…").clicked() {
+                            self.request_forget(device.clone());
                         }
                     }
                     if let Some(avd) = &device.avd {

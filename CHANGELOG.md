@@ -5,6 +5,21 @@ All notable changes to PhoneMirror will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Guided "Forget device…" dialog (disconnect here, forget the computer on the phone, pair again; USB uses Revoke USB debugging authorisations). PhoneMirror never deletes ADB keys or changes network settings.
+- Device connection actions in the toolbar More menu, the sidebar row right-click menu and the Device information window.
+- "Already paired" discovery labels each address against existing ADB transports: connected by IP, connected only by a service name Flutter cannot parse, not connected, or an older re-advertised address of the same phone. Addresses are never auto-selected.
+
+### Changed
+- Disabled toolbar buttons and menu items explain why they are unavailable in their tooltips; disabled icons are slightly more legible.
+- Disconnect is blocked only while that phone is mirrored or any recording runs, instead of whenever any mirror is active.
+- Sidebar rows label IP Wi-Fi transports "Wi-Fi IP" so a phone connected by both IP and service name is distinguishable.
+
+### Tests
+- Added coverage for disconnect targeting, disabled-control reasons, the forget dialog layout and duplicate wireless advertisements; the local suite contains 86 tests.
+
 ## [2.6.0] - 2026-10-29
 
 ### Changed

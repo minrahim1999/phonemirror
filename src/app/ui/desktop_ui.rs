@@ -93,6 +93,7 @@ impl PhoneMirrorApp {
                 }
             });
         self.show_device_info_window(ctx);
+        self.show_forget_dialog(ctx);
     }
 
     pub(super) fn selected(&self) -> Option<&Device> {

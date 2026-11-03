@@ -146,13 +146,14 @@ impl PhoneMirrorApp {
                             .as_ref()
                             .is_some_and(|(id, _)| id == &device.id);
                         let selected = self.selected_device.as_deref() == Some(&device.id);
-                        if ui
+                        let row = ui
                             .push_id(&device.id, |ui| device_row(ui, device, selected, starting))
-                            .inner
-                            .clicked()
-                        {
+                            .inner;
+                        if row.clicked() {
                             chosen = Some(device.id.clone());
                         }
+                        // Right-click acts on this row only; it never changes selection.
+                        row.context_menu(|ui| self.device_context_menu(ui, device));
                     }
                     ui.add_space(8.0);
                 }

@@ -2,13 +2,13 @@
 use super::desktop_ui::Page;
 use super::{
     components::{
-        capsule::{chrome_menu, item, menu_item, pill},
+        capsule::{chrome_menu, item, menu_item, menu_item_why, pill},
         device_row::kind_label,
         icons::Icon,
     },
     theme::{medium, GROUP_GAP, PILL_H, SEG, TRAFFIC_LIGHTS_WIDTH},
 };
-use crate::app::PhoneMirrorApp;
+use crate::app::{devices::Kind, PhoneMirrorApp};
 use crate::app::{TEXT, TEXT_DIM};
 use egui::vec2;
 
@@ -71,6 +71,16 @@ impl PhoneMirrorApp {
         let ready = self.device_status.connected && self.device_status.scrcpy_health.is_empty();
         let streaming = self.embedded.streaming();
         let fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        // Disabled controls explain themselves in their tooltips.
+        let stream_why = self.stream_unavailable_reason();
+        let mirror_why = self.mirror_unavailable_reason();
+        let device_why = self.device_unavailable_reason();
+        let wake_why = if self.embedded.can_wake() {
+            None
+        } else {
+            stream_why
+        };
+        let selected = self.selected().cloned();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = GROUP_GAP;
             self.collapsed_sidebar_controls(ui);
@@ -95,7 +105,8 @@ impl PhoneMirrorApp {
                         "Forward keyboard input",
                         streaming,
                         streaming && self.embedded.keyboard_enabled(),
-                    ),
+                    )
+                    .why(stream_why),
                     item(Icon::Split, "Split view", true, self.split.count() > 0),
                 ],
             );
@@ -128,15 +139,17 @@ impl PhoneMirrorApp {
                 let zoom = pill(
                     ui,
                     &[
-                        item(Icon::ZoomOut, "Zoom out", streaming, false),
-                        item(Icon::ZoomFit, "Fit screen to window", streaming, false),
+                        item(Icon::ZoomOut, "Zoom out", streaming, false).why(stream_why),
+                        item(Icon::ZoomFit, "Fit screen to window", streaming, false)
+                            .why(stream_why),
                         item(
                             Icon::ZoomActual,
                             "Reset zoom to 100% of fit",
                             streaming,
                             false,
-                        ),
-                        item(Icon::ZoomIn, "Zoom in", streaming, false),
+                        )
+                        .why(stream_why),
+                        item(Icon::ZoomIn, "Zoom in", streaming, false).why(stream_why),
                     ],
                 );
                 if zoom[0].clicked() {
@@ -170,7 +183,7 @@ impl PhoneMirrorApp {
             }
             chrome_menu(ui, &window[1], "more_menu", |ui| {
                 let active = self.embedded.active();
-                if menu_item(
+                if menu_item_why(
                     ui,
                     if active {
                         "Stop mirroring"
@@ -178,6 +191,7 @@ impl PhoneMirrorApp {
                         "Start mirroring"
                     },
                     ready || active,
+                    mirror_why,
                 ) {
                     if active {
                         self.embedded.stop();
@@ -185,10 +199,15 @@ impl PhoneMirrorApp {
                         self.start_mirror(ui.ctx());
                     }
                 }
-                if menu_item(ui, "Save screenshot", self.device_status.connected) {
+                if menu_item_why(
+                    ui,
+                    "Save screenshot",
+                    self.device_status.connected,
+                    device_why,
+                ) {
                     self.take_screenshot();
                 }
-                if menu_item(
+                if menu_item_why(
                     ui,
                     if self.is_recording {
                         "Stop recording"
@@ -196,6 +215,7 @@ impl PhoneMirrorApp {
                         "Record screen"
                     },
                     ready || self.is_recording,
+                    mirror_why,
                 ) {
                     if self.is_recording {
                         self.stop_recording();
@@ -205,16 +225,16 @@ impl PhoneMirrorApp {
                 }
                 if compact {
                     ui.separator();
-                    if menu_item(ui, "Zoom in", streaming) {
+                    if menu_item_why(ui, "Zoom in", streaming, stream_why) {
                         self.embedded.zoom_by(1.25);
                     }
-                    if menu_item(ui, "Zoom out", streaming) {
+                    if menu_item_why(ui, "Zoom out", streaming, stream_why) {
                         self.embedded.zoom_by(0.8);
                     }
-                    if menu_item(ui, "Fit screen to window", streaming) {
+                    if menu_item_why(ui, "Fit screen to window", streaming, stream_why) {
                         self.embedded.fit();
                     }
-                    if menu_item(ui, "Reset zoom to 100% of fit", streaming) {
+                    if menu_item_why(ui, "Reset zoom to 100% of fit", streaming, stream_why) {
                         self.embedded.fit();
                     }
                 }
@@ -223,8 +243,18 @@ impl PhoneMirrorApp {
                     self.embedded.release_touch();
                     self.page = Page::Wifi;
                 }
-                if menu_item(ui, "Refresh devices", self.refresh_job.is_none()) {
+                if menu_item_why(
+                    ui,
+                    "Refresh devices",
+                    self.refresh_job.is_none(),
+                    Some("Already checking for devices."),
+                ) {
                     self.rescan_tools();
+                }
+                // Explicit-target connection actions for the selected phone.
+                if let Some(device) = selected.as_ref().filter(|d| d.kind != Kind::Emulator) {
+                    ui.separator();
+                    self.connection_menu_items(ui, device);
                 }
             });
 
@@ -236,7 +266,8 @@ impl PhoneMirrorApp {
                         "Device controls",
                         self.embedded.can_wake(),
                         false,
-                    ),
+                    )
+                    .why(wake_why),
                     item(
                         Icon::Document,
                         "Logs and diagnostics",
@@ -252,7 +283,7 @@ impl PhoneMirrorApp {
                 ],
             );
             chrome_menu(ui, &panels[0], "device_controls", |ui| {
-                if menu_item(ui, "Wake screen", self.embedded.can_wake()) {
+                if menu_item_why(ui, "Wake screen", self.embedded.can_wake(), wake_why) {
                     self.embedded.wake_screen();
                 }
                 ui.separator();
@@ -264,7 +295,7 @@ impl PhoneMirrorApp {
                     ("Volume down", 25),
                     ("Volume up", 24),
                 ] {
-                    if menu_item(ui, label, streaming) {
+                    if menu_item_why(ui, label, streaming, stream_why) {
                         self.embedded.navigation_key(code);
                     }
                 }

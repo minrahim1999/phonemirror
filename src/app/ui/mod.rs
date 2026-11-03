@@ -1,5 +1,6 @@
 //! egui presentation and input handling.
 pub(super) mod components;
+mod connection_ui;
 pub(super) mod desktop_ui;
 mod device_canvas;
 mod device_info;

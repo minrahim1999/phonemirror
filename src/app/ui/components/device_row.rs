@@ -24,6 +24,18 @@ pub(in crate::app::ui) fn kind_short(kind: Kind) -> &'static str {
         Kind::Wifi => "Wi-Fi",
     }
 }
+/// One phone can have both an IP and an mDNS-name Wi-Fi transport; label which is which.
+pub(in crate::app::ui) fn transport_short(device: &Device) -> &'static str {
+    let by_ip = device
+        .serial
+        .as_deref()
+        .is_some_and(|s| s.parse::<std::net::SocketAddr>().is_ok());
+    if device.kind == Kind::Wifi && by_ip {
+        "Wi-Fi IP"
+    } else {
+        kind_short(device.kind)
+    }
+}
 pub(in crate::app::ui) fn state_label(state: State) -> (&'static str, Color32) {
     match state {
         State::Online => ("Connected", GREEN),
@@ -84,7 +96,7 @@ pub(in crate::app::ui) fn device_row(
             // The reference shows OS versions here. Until inventory exposes those,
             // show truthful transport metadata rather than a fabricated version.
             let galley = p.layout_no_wrap(
-                kind_short(device.kind).to_owned(),
+                transport_short(device).to_owned(),
                 egui::FontId::proportional(12.0),
                 on_accent(TEXT_DIM),
             );
@@ -128,5 +140,14 @@ pub(in crate::app::ui) fn device_row(
     }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(format!("{}\n{}", device.name, kind_label(device.kind)))
+        .on_hover_text(if device.kind == Kind::Emulator {
+            format!("{}\n{}", device.name, kind_label(device.kind))
+        } else {
+            format!(
+                "{}\n{}\n{}\nRight-click for connection options",
+                device.name,
+                kind_label(device.kind),
+                device.serial.as_deref().unwrap_or("Not connected")
+            )
+        })
 }

@@ -13,6 +13,7 @@ pub(in crate::app::ui) struct Item<'a> {
     label: &'a str,
     enabled: bool,
     on: bool,
+    reason: Option<&'a str>,
 }
 pub(in crate::app::ui) fn item(icon: Icon, label: &str, enabled: bool, on: bool) -> Item<'_> {
     Item {
@@ -20,6 +21,15 @@ pub(in crate::app::ui) fn item(icon: Icon, label: &str, enabled: bool, on: bool)
         label,
         enabled,
         on,
+        reason: None,
+    }
+}
+
+impl<'a> Item<'a> {
+    /// Explains in the tooltip why a disabled control is unavailable.
+    pub(in crate::app::ui) fn why(mut self, reason: Option<&'a str>) -> Self {
+        self.reason = reason;
+        self
     }
 }
 
@@ -119,13 +129,19 @@ pub(in crate::app::ui) fn icon_button(
             egui::StrokeKind::Inside,
         );
     }
+    // Dimmed but still legible, so the shape stays recognizable while unavailable.
     let color = if !entry.enabled {
-        TEXT_DIM.gamma_multiply(0.4)
+        TEXT_DIM.gamma_multiply(0.6)
     } else {
         TEXT.lerp_to_gamma(ACCENT_TEXT, on)
     };
     paint_icon(ui.painter(), rect, entry.icon, color);
-    response.on_hover_text(entry.label)
+    match entry.reason {
+        Some(reason) if !entry.enabled => {
+            response.on_hover_text(format!("{}\n{reason}", entry.label))
+        }
+        _ => response.on_hover_text(entry.label),
+    }
 }
 
 /// Opens a menu below a chrome button; any click outside the button closes it.
@@ -153,6 +169,19 @@ pub(in crate::app::ui) fn chrome_menu(
     );
 }
 pub(in crate::app::ui) fn menu_item(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
-    ui.add_enabled(enabled, egui::Button::new(text).frame(false))
-        .clicked()
+    menu_item_why(ui, text, enabled, None)
+}
+
+/// A menu entry whose hover text explains why it is disabled.
+pub(in crate::app::ui) fn menu_item_why(
+    ui: &mut egui::Ui,
+    text: &str,
+    enabled: bool,
+    reason: Option<&str>,
+) -> bool {
+    let response = ui.add_enabled(enabled, egui::Button::new(text).frame(false));
+    match reason {
+        Some(reason) if !enabled => response.on_disabled_hover_text(reason).clicked(),
+        _ => response.clicked(),
+    }
 }

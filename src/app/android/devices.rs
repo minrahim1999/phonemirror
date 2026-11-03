@@ -146,7 +146,8 @@ fn emulator_serial(serial: &str) -> bool {
         .strip_prefix("emulator-")
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
-fn transports(text: &str) -> Vec<Device> {
+/// Parses `adb devices -l`; shared with wireless discovery to label live addresses.
+pub(crate) fn transports(text: &str) -> Vec<Device> {
     let mut seen = HashSet::new();
     text.lines()
         .filter_map(|line| {
